@@ -1,35 +1,68 @@
+mod db;
 mod elevenlabs;
+mod hotkey;
 mod microphone;
+mod recorder;
 
-use std::{env, io};
+use std::sync::Arc;
 
-use elevenlabs::ElevenLabs;
-use microphone::Microphone;
+use db::{Db, Transcript};
+use recorder::{Recorder, Snapshot};
+use tauri::{Manager, State, WindowEvent};
 
-type Error = Box<dyn std::error::Error + Send + Sync>;
+#[tauri::command]
+fn get_state(recorder: State<'_, Arc<Recorder>>) -> Snapshot {
+    recorder.snapshot()
+}
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+#[tauri::command]
+fn toggle_recording(recorder: State<'_, Arc<Recorder>>) {
+    recorder.toggle();
+}
+
+#[tauri::command]
+fn list_transcripts(db: State<'_, Db>) -> Result<Vec<Transcript>, String> {
+    db.list().map_err(|error| error.to_string())
+}
+
+fn main() {
     dotenvy::dotenv().ok();
 
-    let api_key = env::var("ELEVENLABS_API_KEY").map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "set ELEVENLABS_API_KEY in the environment or in .env",
-        )
-    })?;
+    let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            get_state,
+            toggle_recording,
+            list_transcripts
+        ])
+        .setup(|app| {
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            app.manage(Db::open(&data_dir.join("touchless.db"))?);
 
-    let (audio_tx, audio_rx) = tokio::sync::mpsc::channel(32);
-    let microphone = Microphone::open(audio_tx)?;
-    let elevenlabs = ElevenLabs::connect(&api_key, microphone.sample_rate()).await?;
+            let recorder = Arc::new(Recorder::new(app.handle().clone()));
+            app.manage(Arc::clone(&recorder));
 
-    microphone.start()?;
-    eprintln!("Listening on the default microphone. Press Ctrl+C to stop.");
+            let hotkey_recorder = Arc::clone(&recorder);
+            recorder.set_hotkey(hotkey::spawn(move || hotkey_recorder.toggle()));
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Keep running in the background so the hotkey keeps working.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Touchless");
 
-    tokio::select! {
-        result = elevenlabs.run(audio_rx) => result?,
-        result = tokio::signal::ctrl_c() => result?,
-    }
-
-    Ok(())
+    app.run(|_app, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event
+            && let Some(window) = _app.get_webview_window("main")
+        {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    });
 }

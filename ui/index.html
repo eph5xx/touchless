@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Touchless</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="main.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">Touchless</div>
+      <nav>
+        <a href="#listen" data-page="listen">
+          <span id="nav-dot" class="dot idle"></span>
+          Listen
+        </a>
+        <a href="#history" data-page="history">History</a>
+      </nav>
+    </aside>
+
+    <main>
+      <section id="page-listen" class="page">
+        <header class="page-header">
+          <h1>Listen</h1>
+          <span id="status-badge" class="badge idle">Idle</span>
+        </header>
+
+        <div id="hotkey-warning" class="callout warning" hidden></div>
+        <div id="error" class="callout error" hidden></div>
+
+        <div class="controls">
+          <div id="timer" class="timer">00:00</div>
+          <button id="toggle" type="button">Start</button>
+          <p class="hint">Tap <kbd>⌘</kbd> <kbd>⌥</kbd> to start or stop</p>
+        </div>
+
+        <div class="transcript">
+          <span id="committed"></span>
+          <span id="partial" class="partial"></span>
+          <p id="transcript-empty" class="muted">Your words will appear here.</p>
+        </div>
+      </section>
+
+      <section id="page-history" class="page" hidden>
+        <header class="page-header">
+          <h1>History</h1>
+        </header>
+        <ul id="history-list" class="history"></ul>
+        <p id="history-empty" class="muted" hidden>No recordings yet.</p>
+      </section>
+    </main>
+  </body>
+</html>

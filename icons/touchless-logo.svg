@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="816" height="816" viewBox="0 0 816 816">
+  <defs>
+    <linearGradient id="background" x1="96" y1="36" x2="716" y2="816" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#393650"/>
+      <stop offset=".52" stop-color="#25263E"/>
+      <stop offset="1" stop-color="#171B2D"/>
+    </linearGradient>
+    <radialGradient id="ambient" cx="0" cy="0" r="1" gradientTransform="translate(206 142) rotate(51) scale(580)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9980AA" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#9980AA" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="142" y1="28" x2="636" y2="788" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".16"/>
+      <stop offset=".5" stop-color="#FFFFFF" stop-opacity=".025"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity=".07"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="258" y1="236" x2="543" y2="589" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFDDAD"/>
+      <stop offset=".46" stop-color="#FFBC98"/>
+      <stop offset="1" stop-color="#F38E89"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="320" y1="236" x2="474" y2="610" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFEAD0"/>
+      <stop offset=".5" stop-color="#FFCAAB"/>
+      <stop offset="1" stop-color="#F79D95"/>
+    </linearGradient>
+    <linearGradient id="dots" x1="408" y1="362" x2="408" y2="414" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#29283F"/>
+      <stop offset="1" stop-color="#444058"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="165%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#090D1B" flood-opacity=".36"/>
+    </filter>
+    <path id="chat" d="M284 236H532C592 236 640 284 640 344V432C640 492 592 540 532 540H350L242 610V532C202 516 176 478 176 432V344C176 284 224 236 284 236Z"/>
+  </defs>
+
+  <rect width="816" height="816" rx="212" fill="url(#background)"/>
+  <rect width="816" height="816" rx="212" fill="url(#ambient)"/>
+  <rect x="12" y="12" width="792" height="792" rx="201" fill="none" stroke="url(#rim)" stroke-width="2"/>
+
+  <g filter="url(#shadow)" stroke-linecap="round" stroke-linejoin="round">
+    <use href="#chat" transform="translate(0 9)" fill="#BC747D" stroke="#BC747D" stroke-width="14"/>
+    <use href="#chat" fill="url(#bubble)" stroke="url(#edge)" stroke-width="14"/>
+  </g>
+
+  <g fill="#FFE4C8" opacity=".45">
+    <circle cx="308" cy="391" r="27"/>
+    <circle cx="408" cy="391" r="27"/>
+    <circle cx="508" cy="391" r="27"/>
+  </g>
+  <g fill="url(#dots)">
+    <circle cx="308" cy="388" r="26"/>
+    <circle cx="408" cy="388" r="26"/>
+    <circle cx="508" cy="388" r="26"/>
+  </g>
+</svg>
