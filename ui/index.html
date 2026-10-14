@@ -5,50 +5,128 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Touchless</title>
     <link rel="stylesheet" href="styles.css" />
-    <script type="module" src="main.js" defer></script>
+    <script type="module" src="js/main.js"></script>
   </head>
   <body>
     <aside class="sidebar">
-      <div class="brand">Touchless</div>
+      <div class="titlebar" data-tauri-drag-region></div>
+      <div class="brand" data-tauri-drag-region>
+        <img src="assets/logo.svg" alt="" width="28" height="28" />
+        <span>Touchless</span>
+      </div>
       <nav>
-        <a href="#listen" data-page="listen">
+        <a href="#dictate" data-page="dictate">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+          Dictate
           <span id="nav-dot" class="dot idle"></span>
-          Listen
         </a>
-        <a href="#history" data-page="history">History</a>
+        <a href="#history" data-page="history">
+          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>
+          History
+        </a>
+        <a href="#settings" data-page="settings">
+          <svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>
+          Settings
+        </a>
       </nav>
+      <div class="sidebar-footer">
+        <span class="shortcut"><kbd>⌘</kbd><kbd>⌥</kbd></span>
+        <span>tap anywhere to dictate</span>
+      </div>
     </aside>
 
     <main>
-      <section id="page-listen" class="page">
-        <header class="page-header">
-          <h1>Listen</h1>
-          <span id="status-badge" class="badge idle">Idle</span>
+      <div class="titlebar" data-tauri-drag-region></div>
+
+      <section id="page-dictate" class="page">
+        <header class="page-header" data-tauri-drag-region>
+          <h1>Dictate</h1>
+          <p class="subtitle">Speak, and Touchless types it into whatever app you're using.</p>
         </header>
 
-        <div id="hotkey-warning" class="callout warning" hidden></div>
-        <div id="error" class="callout error" hidden></div>
+        <div id="callouts" class="callouts"></div>
 
-        <div class="controls">
-          <div id="timer" class="timer">00:00</div>
-          <button id="toggle" type="button">Start</button>
-          <p class="hint">Tap <kbd>⌘</kbd> <kbd>⌥</kbd> to start or stop</p>
+        <div class="recorder-card card">
+          <button id="record" class="record-button idle" type="button" aria-label="Start dictation">
+            <span class="ring"></span>
+            <svg class="icon-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+            <svg class="icon-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
+            <span class="spinner"></span>
+          </button>
+          <div class="recorder-info">
+            <div id="status-label" class="status-label">Ready</div>
+            <div id="timer" class="timer">00:00</div>
+            <div id="status-hint" class="hint">Tap <kbd>⌘</kbd> <kbd>⌥</kbd> or click the button to start.</div>
+          </div>
         </div>
 
-        <div class="transcript">
-          <span id="committed"></span>
-          <span id="partial" class="partial"></span>
-          <p id="transcript-empty" class="muted">Your words will appear here.</p>
+        <div class="card transcript-card">
+          <div class="card-header">
+            <h2>Live transcript</h2>
+            <button id="copy-live" class="ghost small" type="button" hidden>Copy</button>
+          </div>
+          <div class="transcript">
+            <span id="committed"></span><span id="partial" class="partial"></span>
+            <p id="transcript-empty" class="muted">Your words will appear here as you speak.</p>
+          </div>
         </div>
       </section>
 
       <section id="page-history" class="page" hidden>
-        <header class="page-header">
+        <header class="page-header" data-tauri-drag-region>
           <h1>History</h1>
+          <p class="subtitle">Everything you've dictated, stored locally on this Mac.</p>
         </header>
-        <ul id="history-list" class="history"></ul>
-        <p id="history-empty" class="muted" hidden>No recordings yet.</p>
+        <div class="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+          <input id="history-search" type="search" placeholder="Search transcripts" autocomplete="off" />
+        </div>
+        <div id="history-list" class="history"></div>
+        <div id="history-empty" class="empty" hidden>
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+          <p id="history-empty-text">No dictations yet. Tap <kbd>⌘</kbd> <kbd>⌥</kbd> to record your first one.</p>
+        </div>
+      </section>
+
+      <section id="page-settings" class="page" hidden>
+        <header class="page-header" data-tauri-drag-region>
+          <h1>Settings</h1>
+          <p class="subtitle">API keys are stored in your macOS Keychain.</p>
+        </header>
+
+        <h2 class="section-title">API keys</h2>
+        <div id="providers" class="stack"></div>
+
+        <h2 class="section-title">Dictation</h2>
+        <div class="card list">
+          <label class="row">
+            <div>
+              <div class="row-title">Paste into the active app</div>
+              <div class="row-subtitle">Types the transcript where your cursor is when you stop.</div>
+            </div>
+            <input type="checkbox" class="switch" data-preference="auto_paste" />
+          </label>
+          <label class="row">
+            <div>
+              <div class="row-title">Restore clipboard after pasting</div>
+              <div class="row-subtitle">Puts back whatever you had copied before.</div>
+            </div>
+            <input type="checkbox" class="switch" data-preference="restore_clipboard" />
+          </label>
+          <label class="row">
+            <div>
+              <div class="row-title">Show floating pill</div>
+              <div class="row-subtitle">Live status and text at the bottom of the screen while dictating.</div>
+            </div>
+            <input type="checkbox" class="switch" data-preference="show_overlay" />
+          </label>
+        </div>
+
+        <h2 class="section-title">Permissions</h2>
+        <div id="permissions" class="card list"></div>
       </section>
     </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
   </body>
 </html>

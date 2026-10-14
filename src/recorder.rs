@@ -1,8 +1,7 @@
 use std::{
-    env,
     error::Error,
     sync::{Arc, Mutex, mpsc as std_mpsc},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -14,9 +13,18 @@ use crate::{
     elevenlabs::{ElevenLabs, TranscriptEvent},
     hotkey::HotkeyStatus,
     microphone::Microphone,
+    overlay::Overlay,
+    paste::{self, Delivery},
+    settings::{Provider, Settings},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+
+/// Keeps the microphone open briefly after stop so the last syllable is captured.
+const POST_ROLL: Duration = Duration::from_millis(150);
+/// Room for ~25 s of 100 ms chunks, so audio recorded while the connection is
+/// still being established is not dropped.
+const AUDIO_BUFFER_CHUNKS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +32,8 @@ pub enum Status {
     Idle,
     Connecting,
     Listening,
-    Finishing,
+    /// The user stopped; waiting for ElevenLabs to commit the final transcript.
+    Finalizing,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +46,13 @@ pub struct Snapshot {
     pub hotkey: HotkeyStatus,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct Finished {
+    text: String,
+    delivery: Option<Delivery>,
+    error: Option<String>,
+}
+
 struct Inner {
     snapshot: Snapshot,
     stop: Option<std_mpsc::Sender<()>>,
@@ -44,13 +60,15 @@ struct Inner {
 
 pub struct Recorder {
     app: AppHandle,
+    overlay: Overlay,
     inner: Mutex<Inner>,
 }
 
 impl Recorder {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, overlay: Overlay) -> Self {
         Self {
             app,
+            overlay,
             inner: Mutex::new(Inner {
                 snapshot: Snapshot {
                     status: Status::Idle,
@@ -89,6 +107,10 @@ impl Recorder {
                 drop(inner);
                 self.emit(&snapshot);
 
+                if self.app.state::<Settings>().preferences().show_overlay {
+                    self.overlay.show();
+                }
+
                 let recorder = Arc::clone(self);
                 tauri::async_runtime::spawn(async move { recorder.session(stop_rx).await });
             }
@@ -96,12 +118,15 @@ impl Recorder {
                 if let Some(stop) = inner.stop.take() {
                     let _ = stop.send(());
                 }
-                inner.snapshot.status = Status::Finishing;
+                inner.snapshot.status = Status::Finalizing;
                 let snapshot = inner.snapshot.clone();
                 drop(inner);
                 self.emit(&snapshot);
             }
-            Status::Finishing => {}
+            Status::Finalizing => {
+                drop(inner);
+                let _ = self.app.emit("toggle-ignored", ());
+            }
         }
     }
 
@@ -119,6 +144,7 @@ impl Recorder {
         };
 
         let mut error = result.err().map(|error| error.to_string());
+        let mut delivery = None;
         if !text.is_empty() {
             let db = self.app.state::<Db>();
             match db.insert(&text, started_at, now_ms() - started_at) {
@@ -127,20 +153,51 @@ impl Recorder {
                 }
                 Err(db_error) => error = Some(format!("could not save transcript: {db_error}")),
             }
+
+            let preferences = self.app.state::<Settings>().preferences();
+            let touchless_focused = self
+                .app
+                .get_webview_window("main")
+                .and_then(|window| window.is_focused().ok())
+                .unwrap_or(false);
+            match paste::deliver(&text, &preferences, touchless_focused) {
+                Ok(outcome) => delivery = Some(outcome),
+                Err(paste_error) => {
+                    error.get_or_insert(format!("could not paste: {paste_error}"));
+                }
+            }
         }
+
+        let _ = self.app.emit(
+            "dictation-finished",
+            Finished {
+                text: text.clone(),
+                delivery,
+                error: error.clone(),
+            },
+        );
+        let hide_delay = match (&error, text.is_empty()) {
+            (Some(_), _) => Duration::from_millis(3_500),
+            (None, true) => Duration::from_millis(1_200),
+            (None, false) => Duration::from_millis(1_400),
+        };
 
         self.update(|snapshot| {
             snapshot.status = Status::Idle;
             snapshot.partial.clear();
             snapshot.error = error;
         });
+        self.overlay.hide_after(hide_delay);
     }
 
     async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
-        let api_key = env::var("ELEVENLABS_API_KEY")
-            .map_err(|_| "set ELEVENLABS_API_KEY in the environment or in .env")?;
+        let api_key = self
+            .app
+            .state::<Settings>()
+            .api_key(Provider::ElevenLabs)
+            .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
 
-        let (audio_tx, audio_rx) = mpsc::channel(32);
+        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_BUFFER_CHUNKS);
         let (rate_tx, rate_rx) = oneshot::channel();
 
         // cpal streams are not guaranteed to be Send, so the stream lives on its own
@@ -156,6 +213,7 @@ impl Recorder {
                     Ok(microphone) => {
                         let _ = rate_tx.send(Ok(microphone.sample_rate()));
                         let _ = stop.recv();
+                        std::thread::sleep(POST_ROLL);
                     }
                     Err(error) => {
                         let _ = rate_tx.send(Err(error.to_string()));

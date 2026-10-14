@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Touchless Overlay</title>
+    <link rel="stylesheet" href="overlay.css" />
+    <script type="module" src="js/overlay.js"></script>
+  </head>
+  <body>
+    <div id="pill" class="pill idle">
+      <span class="indicator">
+        <span class="dot"></span>
+        <span class="spinner"></span>
+        <svg class="check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+        <svg class="cross" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" /></svg>
+      </span>
+      <div class="text">
+        <span id="text"><span id="committed"></span><span id="partial" class="partial"></span></span>
+      </div>
+      <span id="meta" class="meta"></span>
+    </div>
+  </body>
+</html>

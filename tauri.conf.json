@@ -8,14 +8,34 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Touchless",
-        "width": 900,
-        "height": 600,
-        "minWidth": 600,
-        "minHeight": 400
+        "width": 960,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 480,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      },
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "Touchless Overlay",
+        "width": 520,
+        "height": 132,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "acceptFirstMouse": false,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {

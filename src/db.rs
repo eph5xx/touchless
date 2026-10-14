@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Mutex};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -32,6 +32,10 @@ impl Db {
                 text TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 duration_ms INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );",
         )?;
         Ok(Self {
@@ -75,6 +79,33 @@ impl Db {
             })?
             .collect()
     }
+
+    pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().unwrap();
+        connection.execute("DELETE FROM transcripts WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn get_setting(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().unwrap();
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -91,5 +122,26 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0], second);
         assert_eq!(all[1].text, "first");
+    }
+
+    #[test]
+    fn deletes_transcripts() {
+        let db = Db::open_in_memory().unwrap();
+        let first = db.insert("first", 1_000, 500).unwrap();
+        db.insert("second", 2_000, 700).unwrap();
+
+        db.delete(first.id).unwrap();
+        let all = db.list().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].text, "second");
+    }
+
+    #[test]
+    fn stores_settings() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.get_setting("a").unwrap(), None);
+        db.set_setting("a", "1").unwrap();
+        db.set_setting("a", "2").unwrap();
+        assert_eq!(db.get_setting("a").unwrap().as_deref(), Some("2"));
     }
 }

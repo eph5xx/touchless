@@ -68,14 +68,8 @@ pub fn spawn(on_toggle: impl Fn() + Send + 'static) -> HotkeyStatus {
         CGEventType, CallbackResult,
     };
 
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGPreflightListenEventAccess() -> bool;
-        fn CGRequestListenEventAccess() -> bool;
-    }
-
-    if !unsafe { CGPreflightListenEventAccess() } {
-        unsafe { CGRequestListenEventAccess() };
+    if !crate::permissions::input_monitoring_granted() {
+        crate::permissions::request_input_monitoring();
         return HotkeyStatus::NeedsPermission;
     }
 
