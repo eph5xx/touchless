@@ -15,7 +15,7 @@ use crate::{
     microphone::Microphone,
     overlay::Overlay,
     paste::{self, Delivery},
-    settings::{Provider, Settings},
+    settings::Settings,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -53,8 +53,50 @@ struct Finished {
     error: Option<String>,
 }
 
+struct Segment {
+    raw: String,
+    edited: Option<String>,
+}
+
+/// Committed transcript pieces; an `edited_transcript` replaces its piece.
+#[derive(Default)]
+struct Segments(Vec<Segment>);
+
+impl Segments {
+    fn commit(&mut self, text: &str) {
+        let text = text.trim();
+        if !text.is_empty() {
+            self.0.push(Segment {
+                raw: text.to_owned(),
+                edited: None,
+            });
+        }
+    }
+
+    fn edit(&mut self, original: &str, edited: &str) {
+        let original = original.trim();
+        if let Some(segment) = self
+            .0
+            .iter_mut()
+            .find(|segment| segment.edited.is_none() && segment.raw == original)
+        {
+            segment.edited = Some(edited.trim().to_owned());
+        }
+    }
+
+    fn text(&self) -> String {
+        self.0
+            .iter()
+            .map(|segment| segment.edited.as_deref().unwrap_or(&segment.raw))
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 struct Inner {
     snapshot: Snapshot,
+    segments: Segments,
     stop: Option<std_mpsc::Sender<()>>,
 }
 
@@ -78,6 +120,7 @@ impl Recorder {
                     error: None,
                     hotkey: HotkeyStatus::Unavailable,
                 },
+                segments: Segments::default(),
                 stop: None,
             }),
         }
@@ -97,6 +140,7 @@ impl Recorder {
             Status::Idle => {
                 let (stop_tx, stop_rx) = std_mpsc::channel();
                 inner.stop = Some(stop_tx);
+                inner.segments = Segments::default();
                 let snapshot = &mut inner.snapshot;
                 snapshot.status = Status::Connecting;
                 snapshot.started_at = Some(now_ms());
@@ -191,11 +235,11 @@ impl Recorder {
     }
 
     async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
-        let api_key = self
-            .app
-            .state::<Settings>()
-            .api_key(Provider::ElevenLabs)
+        let settings = self.app.state::<Settings>();
+        let api_key = settings
+            .api_key()
             .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
+        let options = settings.transcription();
 
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_BUFFER_CHUNKS);
         let (rate_tx, rate_rx) = oneshot::channel();
@@ -224,7 +268,7 @@ impl Recorder {
         let sample_rate = rate_rx
             .await
             .map_err(|_| "microphone thread exited unexpectedly")??;
-        let client = ElevenLabs::connect(&api_key, sample_rate).await?;
+        let client = ElevenLabs::connect(&api_key, sample_rate, &options).await?;
 
         self.update(|snapshot| {
             if snapshot.status == Status::Connecting {
@@ -232,23 +276,30 @@ impl Recorder {
             }
         });
 
-        client
-            .run(audio_rx, |event| {
-                self.update(|snapshot| match event {
-                    TranscriptEvent::Partial(text) => snapshot.partial = text,
-                    TranscriptEvent::Committed(text) => {
-                        let text = text.trim();
-                        if !text.is_empty() {
-                            if !snapshot.committed.is_empty() {
-                                snapshot.committed.push(' ');
-                            }
-                            snapshot.committed.push_str(text);
-                        }
-                        snapshot.partial.clear();
-                    }
-                })
-            })
-            .await
+        client.run(audio_rx, |event| self.apply(event)).await
+    }
+
+    fn apply(&self, event: TranscriptEvent) {
+        let snapshot = {
+            let mut inner = self.inner.lock().unwrap();
+            let Inner {
+                snapshot, segments, ..
+            } = &mut *inner;
+            match event {
+                TranscriptEvent::Partial(text) => snapshot.partial = text,
+                TranscriptEvent::Committed(text) => {
+                    segments.commit(&text);
+                    snapshot.committed = segments.text();
+                    snapshot.partial.clear();
+                }
+                TranscriptEvent::Edited { original, edited } => {
+                    segments.edit(&original, &edited);
+                    snapshot.committed = segments.text();
+                }
+            }
+            snapshot.clone()
+        };
+        self.emit(&snapshot);
     }
 
     fn update(&self, change: impl FnOnce(&mut Snapshot)) {
@@ -270,4 +321,41 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn joins_committed_segments() {
+        let mut segments = Segments::default();
+        segments.commit(" hello ");
+        segments.commit("");
+        segments.commit("world");
+        assert_eq!(segments.text(), "hello world");
+    }
+
+    #[test]
+    fn applies_edits_out_of_order() {
+        let mut segments = Segments::default();
+        segments.commit("one");
+        segments.commit("two");
+        segments.commit("one");
+        segments.edit("two", "Two.");
+        segments.edit("one", "One.");
+        assert_eq!(segments.text(), "One. Two. one");
+        segments.edit("one", "One!");
+        assert_eq!(segments.text(), "One. Two. One!");
+    }
+
+    #[test]
+    fn ignores_unknown_edits_and_drops_emptied_segments() {
+        let mut segments = Segments::default();
+        segments.commit("um");
+        segments.commit("hi");
+        segments.edit("never committed", "x");
+        segments.edit("um", "");
+        assert_eq!(segments.text(), "hi");
+    }
 }

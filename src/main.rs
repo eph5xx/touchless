@@ -7,6 +7,7 @@ mod paste;
 mod permissions;
 mod recorder;
 mod settings;
+mod tray;
 
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use db::{Db, Transcript};
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use recorder::{Recorder, Snapshot};
-use settings::{Preferences, Provider, Settings, SettingsView};
+use settings::{Preferences, Settings, SettingsView, TranscriptionOptions};
 use tauri::{AppHandle, Manager, State, WindowEvent};
 
 #[tauri::command]
@@ -43,30 +44,34 @@ fn get_settings(settings: State<'_, Settings>) -> SettingsView {
 }
 
 #[tauri::command]
-fn set_api_key(
-    settings: State<'_, Settings>,
-    provider: Provider,
-    key: String,
-) -> Result<SettingsView, String> {
-    settings.set_api_key(provider, &key)?;
+fn set_api_key(settings: State<'_, Settings>, key: String) -> Result<SettingsView, String> {
+    settings.set_api_key(&key)?;
     Ok(settings.view())
 }
 
 #[tauri::command]
-fn remove_api_key(
-    settings: State<'_, Settings>,
-    provider: Provider,
-) -> Result<SettingsView, String> {
-    settings.remove_api_key(provider)?;
+fn remove_api_key(settings: State<'_, Settings>) -> Result<SettingsView, String> {
+    settings.remove_api_key()?;
     Ok(settings.view())
 }
 
 #[tauri::command]
-async fn test_api_key(settings: State<'_, Settings>, provider: Provider) -> Result<String, String> {
+async fn test_api_key(settings: State<'_, Settings>) -> Result<String, String> {
     let key = settings
-        .api_key(provider)
+        .api_key()
         .ok_or_else(|| "Add a key first".to_owned())?;
-    settings::test_api_key(provider, &key).await
+    let options = settings.transcription();
+    settings::test_api_key(&key, &options).await
+}
+
+#[tauri::command]
+fn update_transcription(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    options: TranscriptionOptions,
+) -> Result<SettingsView, String> {
+    settings.set_transcription(&db, options)?;
+    Ok(settings.view())
 }
 
 #[tauri::command]
@@ -100,8 +105,7 @@ fn restart_app(app: AppHandle) {
 }
 
 fn main() {
-    dotenvy::dotenv().ok();
-    // Both the WebSocket and HTTPS clients use rustls; pin its crypto backend.
+    // The WebSocket client uses rustls; pin its crypto backend.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let app = tauri::Builder::default()
@@ -114,6 +118,7 @@ fn main() {
             set_api_key,
             remove_api_key,
             test_api_key,
+            update_transcription,
             update_preferences,
             get_permissions,
             request_accessibility,
@@ -133,6 +138,8 @@ fn main() {
 
             let hotkey_recorder = Arc::clone(&recorder);
             recorder.set_hotkey(hotkey::spawn(move || hotkey_recorder.toggle()));
+
+            tray::create(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -147,11 +154,8 @@ fn main() {
 
     app.run(|_app, _event| {
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { .. } = _event
-            && let Some(window) = _app.get_webview_window("main")
-        {
-            let _ = window.show();
-            let _ = window.set_focus();
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            tray::show_main(_app, None);
         }
     });
 }

@@ -51,6 +51,9 @@ await listen("recorder-state", (event) => {
   renderCallouts(app);
 });
 await listen("toggle-ignored", onToggleIgnored);
+await listen("navigate", ({ payload }) => {
+  if (PAGES.includes(payload)) location.hash = `#${payload}`;
+});
 await listen("transcripts-changed", () => {
   if (currentPage() === "history") loadHistory();
 });

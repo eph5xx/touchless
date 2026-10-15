@@ -1,9 +1,7 @@
 import { $, el, invoke, toast } from "./util.js";
+import { LANGUAGES, languageName } from "./languages.js";
 
-const SOURCE_BADGES = {
-  keychain: ["success", "Saved in Keychain"],
-  environment: ["warning", "Using .env"],
-};
+const MAX_KEYTERMS = 50;
 
 let onChange = () => {};
 let current = null;
@@ -13,6 +11,35 @@ export function initSettings(handleChange) {
   for (const input of document.querySelectorAll("[data-preference]")) {
     input.addEventListener("change", savePreferences);
   }
+
+  $("language-code").replaceChildren(
+    el("option", { value: "" }, "Auto-detect"),
+    ...LANGUAGES.map(([code, name]) => el("option", { value: code }, name)),
+  );
+  $("language-code").addEventListener("change", (event) =>
+    saveTranscription({ language_code: event.target.value || null }),
+  );
+  $("secondary-add").addEventListener("change", (event) => {
+    const code = event.target.value;
+    if (!code) return;
+    saveTranscription({
+      secondary_languages: [...current.transcription.secondary_languages, code],
+    });
+  });
+  $("no-verbatim").addEventListener("change", (event) =>
+    saveTranscription({ no_verbatim: event.target.checked }),
+  );
+  $("keyterm-input").addEventListener("keydown", async (event) => {
+    const input = event.target;
+    if (event.key !== "Enter" || !input.value.trim()) return;
+    event.preventDefault();
+    if (await saveTranscription({ keyterms: [...current.transcription.keyterms, input.value] })) {
+      input.value = "";
+    }
+  });
+  $("transcript-edit").addEventListener("change", (event) =>
+    saveTranscription({ transcript_edit: event.target.value }),
+  );
 }
 
 export function renderSettings(settings) {
@@ -24,25 +51,19 @@ export function renderSettings(settings) {
   restore.disabled = !settings.preferences.auto_paste;
   restore.closest(".row").style.opacity = settings.preferences.auto_paste ? "" : "0.5";
 
-  // Keep typed-but-unsaved keys when re-rendering.
-  const drafts = {};
-  for (const input of document.querySelectorAll("#providers input")) {
-    drafts[input.dataset.provider] = input.value;
-  }
-  $("providers").replaceChildren(
-    ...settings.providers.map((provider) => renderProvider(provider, drafts[provider.id] ?? "")),
-  );
+  // Keep a typed-but-unsaved key when re-rendering.
+  const draft = $("api-key").querySelector("input")?.value ?? "";
+  $("api-key").replaceChildren(...renderApiKey(settings.api_key, draft));
+  renderTranscription(settings.transcription);
 }
 
-function renderProvider(provider, draft) {
-  const [badgeKind, badgeText] = SOURCE_BADGES[provider.source] ?? ["", "Not set"];
+function renderApiKey(status, draft) {
   const input = el("input", {
     type: "password",
-    placeholder: provider.hint ? `Current key ${provider.hint}` : "Paste API key",
+    placeholder: status.hint ? `Current key ${status.hint}` : "Paste API key",
     value: draft,
     autocomplete: "off",
     spellcheck: false,
-    dataset: { provider: provider.id },
   });
   const save = el("button", { type: "button", disabled: !draft.trim() }, "Save");
   input.addEventListener("input", () => (save.disabled = !input.value.trim()));
@@ -52,43 +73,100 @@ function renderProvider(provider, draft) {
 
   save.addEventListener("click", () =>
     run(save, async () => {
-      const settings = await invoke("set_api_key", { provider: provider.id, key: input.value });
+      const settings = await invoke("set_api_key", { key: input.value });
       input.value = "";
-      toast(`${provider.name} key saved`);
+      toast("ElevenLabs key saved");
       update(settings);
     }),
   );
 
-  const test = provider.testable
-    ? el("button", { className: "secondary", type: "button", disabled: !provider.source }, "Test")
-    : null;
-  test?.addEventListener("click", () =>
-    run(test, async () => toast(await invoke("test_api_key", { provider: provider.id })), "Testing…"),
+  const test = el("button", { className: "secondary", type: "button", disabled: !status.saved }, "Test");
+  test.addEventListener("click", () =>
+    run(test, async () => toast(await invoke("test_api_key"), { duration: 4000 }), "Testing…"),
   );
 
-  const remove =
-    provider.source === "keychain"
-      ? el("button", { className: "ghost danger", type: "button" }, "Remove")
-      : null;
+  const remove = status.saved
+    ? el("button", { className: "ghost danger", type: "button" }, "Remove")
+    : null;
   remove?.addEventListener("click", () =>
     run(remove, async () => {
-      update(await invoke("remove_api_key", { provider: provider.id }));
-      toast(`${provider.name} key removed`);
+      update(await invoke("remove_api_key"));
+      toast("ElevenLabs key removed");
     }),
   );
 
-  return el(
-    "div",
-    { className: "card provider" },
+  const [badgeKind, badgeText] = status.saved ? ["success", "Saved in Keychain"] : ["", "Not set"];
+  return [
     el(
       "div",
-      { className: "provider-head" },
-      el("span", { className: "provider-name" }, provider.name),
+      { className: "api-key-head" },
+      el("span", { className: "api-key-name" }, "ElevenLabs"),
       el("span", { className: `badge ${badgeKind}` }, badgeText),
     ),
-    el("p", { className: "provider-description" }, provider.description),
-    el("div", { className: "provider-form" }, input, save, test, remove),
+    el("p", { className: "api-key-description" }, "Realtime speech-to-text (Scribe v2)."),
+    el("div", { className: "api-key-form" }, input, save, test, remove),
+  ];
+}
+
+function renderTranscription(options) {
+  $("language-code").value = options.language_code ?? "";
+
+  const selected = new Set(options.secondary_languages);
+  $("secondary-add").replaceChildren(
+    el("option", { value: "" }, "Add language…"),
+    ...LANGUAGES.filter(([code]) => code !== options.language_code && !selected.has(code)).map(
+      ([code, name]) => el("option", { value: code }, name),
+    ),
   );
+  $("secondary-add").value = "";
+  $("secondary-languages").replaceChildren(
+    ...options.secondary_languages.map((code) =>
+      chip(languageName(code), () =>
+        saveTranscription({
+          secondary_languages: options.secondary_languages.filter((item) => item !== code),
+        }),
+      ),
+    ),
+  );
+
+  $("no-verbatim").checked = options.no_verbatim;
+
+  $("keyterms").replaceChildren(
+    ...options.keyterms.map((term) =>
+      chip(term, () =>
+        saveTranscription({ keyterms: options.keyterms.filter((item) => item !== term) }),
+      ),
+    ),
+  );
+  $("keyterms-count").textContent = `${options.keyterms.length}/${MAX_KEYTERMS}`;
+  $("keyterm-input").disabled = options.keyterms.length >= MAX_KEYTERMS;
+
+  // Don't overwrite the instruction while the user is typing it.
+  if (document.activeElement !== $("transcript-edit")) {
+    $("transcript-edit").value = options.transcript_edit;
+  }
+}
+
+function chip(label, onRemove) {
+  return el(
+    "span",
+    { className: "chip" },
+    label,
+    el("button", { type: "button", className: "chip-remove", title: "Remove", onclick: onRemove }, "×"),
+  );
+}
+
+/** Saves a partial change to the transcription options; returns whether it worked. */
+async function saveTranscription(change) {
+  const options = { ...current.transcription, ...change };
+  try {
+    update(await invoke("update_transcription", { options }));
+    return true;
+  } catch (error) {
+    toast(String(error), { error: true, duration: 4000 });
+    renderSettings(current);
+    return false;
+  }
 }
 
 async function run(button, action, busyLabel) {

@@ -91,11 +91,56 @@
       <section id="page-settings" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
           <h1>Settings</h1>
-          <p class="subtitle">API keys are stored in your macOS Keychain.</p>
+          <p class="subtitle">Your ElevenLabs API key is stored in your macOS Keychain.</p>
         </header>
 
-        <h2 class="section-title">API keys</h2>
-        <div id="providers" class="stack"></div>
+        <h2 class="section-title">ElevenLabs API key</h2>
+        <div id="api-key" class="card api-key"></div>
+
+        <h2 class="section-title">Transcription</h2>
+        <div class="card list">
+          <div class="row">
+            <div>
+              <div class="row-title">Primary language</div>
+              <div class="row-subtitle">The language you usually speak.</div>
+            </div>
+            <select id="language-code"></select>
+          </div>
+          <div class="row column">
+            <div class="row-head">
+              <div>
+                <div class="row-title">Other languages</div>
+                <div class="row-subtitle">Languages you sometimes switch to. Helps pick the right one.</div>
+              </div>
+              <select id="secondary-add"></select>
+            </div>
+            <div id="secondary-languages" class="chips"></div>
+          </div>
+          <label class="row">
+            <div>
+              <div class="row-title">Remove filler words</div>
+              <div class="row-subtitle">Drops “um”, “uh”, false starts and repetitions.</div>
+            </div>
+            <input id="no-verbatim" type="checkbox" class="switch" />
+          </label>
+          <div class="row column">
+            <div>
+              <div class="row-title">Key terms <span id="keyterms-count" class="count"></span></div>
+              <div class="row-subtitle">Names and jargon to recognize reliably. Adds 20% to the transcription cost.</div>
+            </div>
+            <div class="chips-input">
+              <div id="keyterms" class="chips"></div>
+              <input id="keyterm-input" type="text" placeholder="Add a term and press Enter" autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+          <div class="row column">
+            <div>
+              <div class="row-title">Edit instruction</div>
+              <div class="row-subtitle">ElevenLabs rewrites each sentence following this instruction. Leave empty to turn it off. Adds 30% to the transcription cost.</div>
+            </div>
+            <textarea id="transcript-edit" rows="3" maxlength="2000" placeholder="Fix grammar and punctuation. Keep my wording."></textarea>
+          </div>
+        </div>
 
         <h2 class="section-title">Dictation</h2>
         <div class="card list">

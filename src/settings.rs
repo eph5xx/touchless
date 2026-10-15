@@ -1,50 +1,13 @@
-use std::{collections::BTreeMap, env, sync::Mutex};
+use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::db::Db;
 
 const PREFERENCES_KEY: &str = "preferences";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Provider {
-    ElevenLabs,
-    OpenAi,
-    Jev,
-}
-
-impl Provider {
-    pub const ALL: [Provider; 3] = [Provider::ElevenLabs, Provider::OpenAi, Provider::Jev];
-
-    fn name(self) -> &'static str {
-        match self {
-            Provider::ElevenLabs => "ElevenLabs",
-            Provider::OpenAi => "OpenAI",
-            Provider::Jev => "Jev",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Provider::ElevenLabs => "Realtime speech-to-text (Scribe v2).",
-            Provider::OpenAi => "Reserved for upcoming plugins, like the English tutor.",
-            Provider::Jev => "Typesafe AI. Reserved for upcoming agent features.",
-        }
-    }
-
-    fn env_var(self) -> &'static str {
-        match self {
-            Provider::ElevenLabs => "ELEVENLABS_API_KEY",
-            Provider::OpenAi => "OPENAI_API_KEY",
-            Provider::Jev => "JEV_API_KEY",
-        }
-    }
-
-    fn testable(self) -> bool {
-        !matches!(self, Provider::Jev)
-    }
-}
+const TRANSCRIPTION_KEY: &str = "transcription";
+pub const MAX_KEYTERMS: usize = 50;
+pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -64,112 +27,141 @@ impl Default for Preferences {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KeySource {
-    Keychain,
-    Environment,
+/// Options passed to the ElevenLabs realtime API for every dictation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TranscriptionOptions {
+    /// ISO-639 code; `None` lets ElevenLabs detect the language.
+    pub language_code: Option<String>,
+    pub secondary_languages: Vec<String>,
+    /// Removes filler words, false starts and disfluencies.
+    pub no_verbatim: bool,
+    pub keyterms: Vec<String>,
+    /// Natural-language instruction applied to each committed transcript; empty is off.
+    pub transcript_edit: String,
+}
+
+impl TranscriptionOptions {
+    pub fn normalized(self) -> Result<Self, String> {
+        let language_code = match self.language_code.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(code) => Some(normalize_language(code)?),
+        };
+
+        let mut secondary_languages: Vec<String> = Vec::new();
+        for code in &self.secondary_languages {
+            let code = normalize_language(code)?;
+            if language_code.as_ref() != Some(&code) && !secondary_languages.contains(&code) {
+                secondary_languages.push(code);
+            }
+        }
+
+        let mut keyterms: Vec<String> = Vec::new();
+        for term in &self.keyterms {
+            let term = term.split_whitespace().collect::<Vec<_>>().join(" ");
+            let duplicate = keyterms
+                .iter()
+                .any(|existing| existing.to_lowercase() == term.to_lowercase());
+            if !term.is_empty() && !duplicate {
+                keyterms.push(term);
+            }
+        }
+        if keyterms.len() > MAX_KEYTERMS {
+            return Err(format!("Use at most {MAX_KEYTERMS} key terms"));
+        }
+
+        let transcript_edit = self.transcript_edit.trim().to_owned();
+        if transcript_edit.chars().count() > MAX_EDIT_INSTRUCTION_CHARS {
+            return Err(format!(
+                "The edit instruction can be at most {MAX_EDIT_INSTRUCTION_CHARS} characters"
+            ));
+        }
+
+        Ok(Self {
+            language_code,
+            secondary_languages,
+            no_verbatim: self.no_verbatim,
+            keyterms,
+            transcript_edit,
+        })
+    }
+}
+
+fn normalize_language(code: &str) -> Result<String, String> {
+    let code = code.trim().to_ascii_lowercase();
+    if (2..=3).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_lowercase()) {
+        Ok(code)
+    } else {
+        Err(format!("\"{code}\" is not a valid language code"))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ProviderStatus {
-    id: Provider,
-    name: &'static str,
-    description: &'static str,
+pub struct ApiKeyStatus {
+    saved: bool,
     hint: Option<String>,
-    source: Option<KeySource>,
-    testable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingsView {
-    providers: Vec<ProviderStatus>,
+    api_key: ApiKeyStatus,
     preferences: Preferences,
+    transcription: TranscriptionOptions,
 }
 
-/// API keys live in the macOS Keychain (one item holding all keys, so a dev build
-/// triggers at most one access prompt); preferences live in SQLite.
+/// The ElevenLabs API key lives in the macOS Keychain; everything else lives in SQLite.
 pub struct Settings {
-    keys: Mutex<BTreeMap<Provider, String>>,
+    api_key: Mutex<Option<String>>,
     preferences: Mutex<Preferences>,
+    transcription: Mutex<TranscriptionOptions>,
 }
 
 impl Settings {
     pub fn load(db: &Db) -> Self {
-        let keys = keychain::load().unwrap_or_else(|error| {
-            eprintln!("could not read API keys from the Keychain: {error}");
-            BTreeMap::new()
+        let api_key = keychain::load().unwrap_or_else(|error| {
+            eprintln!("could not read the API key from the Keychain: {error}");
+            None
         });
-        let preferences = db
-            .get_setting(PREFERENCES_KEY)
-            .ok()
-            .flatten()
-            .and_then(|value| serde_json::from_str(&value).ok())
-            .unwrap_or_default();
         Self {
-            keys: Mutex::new(keys),
-            preferences: Mutex::new(preferences),
+            api_key: Mutex::new(api_key),
+            preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
+            transcription: Mutex::new(load_json(db, TRANSCRIPTION_KEY)),
         }
     }
 
     pub fn view(&self) -> SettingsView {
-        let keys = self.keys.lock().unwrap();
-        let providers = Provider::ALL
-            .into_iter()
-            .map(|provider| {
-                let (key, source) = match keys.get(&provider) {
-                    Some(key) => (Some(key.clone()), Some(KeySource::Keychain)),
-                    None => match env_key(provider) {
-                        Some(key) => (Some(key), Some(KeySource::Environment)),
-                        None => (None, None),
-                    },
-                };
-                ProviderStatus {
-                    id: provider,
-                    name: provider.name(),
-                    description: provider.description(),
-                    hint: key.as_deref().map(mask),
-                    source,
-                    testable: provider.testable(),
-                }
-            })
-            .collect();
+        let key = self.api_key();
         SettingsView {
-            providers,
+            api_key: ApiKeyStatus {
+                saved: key.is_some(),
+                hint: key.as_deref().map(mask),
+            },
             preferences: self.preferences(),
+            transcription: self.transcription(),
         }
     }
 
-    pub fn api_key(&self, provider: Provider) -> Option<String> {
-        let stored = self.keys.lock().unwrap().get(&provider).cloned();
-        stored.or_else(|| env_key(provider))
+    pub fn api_key(&self) -> Option<String> {
+        self.api_key.lock().unwrap().clone()
     }
 
-    pub fn set_api_key(&self, provider: Provider, key: &str) -> Result<(), String> {
+    pub fn set_api_key(&self, key: &str) -> Result<(), String> {
         let key = key.trim();
         if key.is_empty() {
             return Err("the API key is empty".into());
         }
-        self.change_keys(|keys| {
-            keys.insert(provider, key.to_owned());
-        })
+        self.change_api_key(Some(key.to_owned()))
     }
 
-    pub fn remove_api_key(&self, provider: Provider) -> Result<(), String> {
-        self.change_keys(|keys| {
-            keys.remove(&provider);
-        })
+    pub fn remove_api_key(&self) -> Result<(), String> {
+        self.change_api_key(None)
     }
 
-    fn change_keys(
-        &self,
-        change: impl FnOnce(&mut BTreeMap<Provider, String>),
-    ) -> Result<(), String> {
-        let mut keys = self.keys.lock().unwrap();
-        let mut next = keys.clone();
-        change(&mut next);
-        keychain::save(&next).map_err(|error| format!("could not update the Keychain: {error}"))?;
-        *keys = next;
+    fn change_api_key(&self, next: Option<String>) -> Result<(), String> {
+        let mut current = self.api_key.lock().unwrap();
+        keychain::save(next.as_deref())
+            .map_err(|error| format!("could not update the Keychain: {error}"))?;
+        *current = next;
         Ok(())
     }
 
@@ -178,19 +170,37 @@ impl Settings {
     }
 
     pub fn set_preferences(&self, db: &Db, preferences: Preferences) -> Result<(), String> {
-        let value = serde_json::to_string(&preferences).map_err(|error| error.to_string())?;
-        db.set_setting(PREFERENCES_KEY, &value)
+        save_json(db, PREFERENCES_KEY, &preferences)
             .map_err(|error| format!("could not save preferences: {error}"))?;
         *self.preferences.lock().unwrap() = preferences;
         Ok(())
     }
+
+    pub fn transcription(&self) -> TranscriptionOptions {
+        self.transcription.lock().unwrap().clone()
+    }
+
+    pub fn set_transcription(&self, db: &Db, options: TranscriptionOptions) -> Result<(), String> {
+        let options = options.normalized()?;
+        save_json(db, TRANSCRIPTION_KEY, &options)
+            .map_err(|error| format!("could not save transcription settings: {error}"))?;
+        *self.transcription.lock().unwrap() = options;
+        Ok(())
+    }
 }
 
-fn env_key(provider: Provider) -> Option<String> {
-    env::var(provider.env_var())
+fn load_json<T: DeserializeOwned + Default>(db: &Db, key: &str) -> T {
+    db.get_setting(key)
         .ok()
-        .map(|key| key.trim().to_owned())
-        .filter(|key| !key.is_empty())
+        .flatten()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default()
+}
+
+fn save_json<T: Serialize>(db: &Db, key: &str, value: &T) -> Result<(), String> {
+    let value = serde_json::to_string(value).map_err(|error| error.to_string())?;
+    db.set_setting(key, &value)
+        .map_err(|error| error.to_string())
 }
 
 fn mask(key: &str) -> String {
@@ -202,30 +212,34 @@ fn mask(key: &str) -> String {
     format!("••••{tail}")
 }
 
-pub async fn test_api_key(provider: Provider, key: &str) -> Result<String, String> {
-    match provider {
-        Provider::ElevenLabs => crate::elevenlabs::ElevenLabs::verify(key)
-            .await
-            .map(|()| "Connected to ElevenLabs".into())
-            .map_err(|error| error.to_string()),
-        Provider::OpenAi => {
-            let response = reqwest::Client::new()
-                .get("https://api.openai.com/v1/models")
-                .bearer_auth(key)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .map_err(|error| format!("could not reach OpenAI: {error}"))?;
-            match response.status() {
-                status if status.is_success() => Ok("Connected to OpenAI".into()),
-                status if status.as_u16() == 401 => Err("OpenAI rejected the key".into()),
-                status => Err(format!("OpenAI responded with {status}")),
-            }
-        }
-        Provider::Jev => Err("Testing Jev keys is not supported yet".into()),
-    }
+/// Connects with the current options and describes what ElevenLabs accepted.
+pub async fn test_api_key(key: &str, options: &TranscriptionOptions) -> Result<String, String> {
+    let config = crate::elevenlabs::ElevenLabs::verify(key, options)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(describe_session(&config))
 }
 
+fn describe_session(config: &serde_json::Value) -> String {
+    let mut parts = vec!["Connected to ElevenLabs".to_owned()];
+    match config["language_code"].as_str() {
+        Some(code) if !code.is_empty() => parts.push(format!("language: {code}")),
+        _ => parts.push("language: auto".into()),
+    }
+    if let Some(keyterms) = config["keyterms"].as_array()
+        && !keyterms.is_empty()
+    {
+        parts.push(format!("{} key terms", keyterms.len()));
+    }
+    if config["no_verbatim"].as_bool() == Some(true) {
+        parts.push("filler words removed".into());
+    }
+    parts.join(" · ")
+}
+
+/// The Keychain item holds a JSON object so the format can grow; only the
+/// ElevenLabs entry is used. Older builds also stored other providers' keys
+/// there, and those are dropped on the next save.
 #[cfg(target_os = "macos")]
 mod keychain {
     use std::collections::BTreeMap;
@@ -234,45 +248,51 @@ mod keychain {
         delete_generic_password, get_generic_password, set_generic_password,
     };
 
-    use super::Provider;
-
     const SERVICE: &str = "com.touchless.desktop";
     const ACCOUNT: &str = "api-keys";
+    const ELEVENLABS: &str = "elevenlabs";
     const ITEM_NOT_FOUND: i32 = -25300;
 
-    pub fn load() -> Result<BTreeMap<Provider, String>, String> {
+    pub fn load() -> Result<Option<String>, String> {
         match get_generic_password(SERVICE, ACCOUNT) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string()),
-            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(BTreeMap::new()),
+            Ok(bytes) => super::parse_stored_keys(&bytes),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    pub fn save(keys: &BTreeMap<Provider, String>) -> Result<(), String> {
-        if keys.is_empty() {
+    pub fn save(key: Option<&str>) -> Result<(), String> {
+        let Some(key) = key else {
             return match delete_generic_password(SERVICE, ACCOUNT) {
                 Err(error) if error.code() != ITEM_NOT_FOUND => Err(error.to_string()),
                 _ => Ok(()),
             };
-        }
-        let json = serde_json::to_vec(keys).map_err(|error| error.to_string())?;
+        };
+        let keys = BTreeMap::from([(ELEVENLABS, key)]);
+        let json = serde_json::to_vec(&keys).map_err(|error| error.to_string())?;
         set_generic_password(SERVICE, ACCOUNT, &json).map_err(|error| error.to_string())
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod keychain {
-    use std::collections::BTreeMap;
-
-    use super::Provider;
-
-    pub fn load() -> Result<BTreeMap<Provider, String>, String> {
-        Ok(BTreeMap::new())
+    pub fn load() -> Result<Option<String>, String> {
+        Ok(None)
     }
 
-    pub fn save(_keys: &BTreeMap<Provider, String>) -> Result<(), String> {
+    pub fn save(_key: Option<&str>) -> Result<(), String> {
         Err("secure key storage is only available on macOS".into())
     }
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_stored_keys(bytes: &[u8]) -> Result<Option<String>, String> {
+    let keys: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    Ok(keys
+        .get("elevenlabs")
+        .map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty()))
 }
 
 #[cfg(test)]
@@ -294,14 +314,95 @@ mod tests {
     }
 
     #[test]
-    fn provider_ids_are_stable() {
+    fn reads_elevenlabs_key_from_legacy_keychain_data() {
+        let stored = br#"{"elevenlabs":"sk_eleven","openai":"sk_openai","jev":"x"}"#;
         assert_eq!(
-            serde_json::to_string(&Provider::ElevenLabs).unwrap(),
-            r#""elevenlabs""#
+            parse_stored_keys(stored).unwrap().as_deref(),
+            Some("sk_eleven")
+        );
+        assert_eq!(parse_stored_keys(br#"{"openai":"sk"}"#).unwrap(), None);
+    }
+
+    #[test]
+    fn transcription_options_fill_missing_fields_with_defaults() {
+        let options: TranscriptionOptions =
+            serde_json::from_str(r#"{"no_verbatim":true}"#).unwrap();
+        assert!(options.no_verbatim);
+        assert_eq!(options.language_code, None);
+        assert!(options.keyterms.is_empty());
+    }
+
+    #[test]
+    fn normalizes_transcription_options() {
+        let options = TranscriptionOptions {
+            language_code: Some(" ENG ".into()),
+            secondary_languages: vec!["rus".into(), "eng".into(), "RUS".into(), "ukr".into()],
+            no_verbatim: true,
+            keyterms: vec![
+                "  Touchless ".into(),
+                "".into(),
+                "touchless".into(),
+                "Scribe   v2".into(),
+            ],
+            transcript_edit: "  Fix grammar.  ".into(),
+        }
+        .normalized()
+        .unwrap();
+
+        assert_eq!(options.language_code.as_deref(), Some("eng"));
+        assert_eq!(options.secondary_languages, ["rus", "ukr"]);
+        assert_eq!(options.keyterms, ["Touchless", "Scribe v2"]);
+        assert_eq!(options.transcript_edit, "Fix grammar.");
+    }
+
+    #[test]
+    fn empty_language_means_auto_detect() {
+        let options = TranscriptionOptions {
+            language_code: Some(" ".into()),
+            ..Default::default()
+        }
+        .normalized()
+        .unwrap();
+        assert_eq!(options.language_code, None);
+    }
+
+    #[test]
+    fn rejects_invalid_transcription_options() {
+        let invalid_language = TranscriptionOptions {
+            language_code: Some("english".into()),
+            ..Default::default()
+        };
+        assert!(invalid_language.normalized().is_err());
+
+        let too_many_keyterms = TranscriptionOptions {
+            keyterms: (0..=MAX_KEYTERMS)
+                .map(|index| format!("term {index}"))
+                .collect(),
+            ..Default::default()
+        };
+        assert!(too_many_keyterms.normalized().is_err());
+
+        let long_instruction = TranscriptionOptions {
+            transcript_edit: "a".repeat(MAX_EDIT_INSTRUCTION_CHARS + 1),
+            ..Default::default()
+        };
+        assert!(long_instruction.normalized().is_err());
+    }
+
+    #[test]
+    fn describes_accepted_session() {
+        let config = serde_json::json!({
+            "language_code": "eng",
+            "keyterms": ["a", "b"],
+            "no_verbatim": true,
+        });
+        assert_eq!(
+            describe_session(&config),
+            "Connected to ElevenLabs · language: eng · 2 key terms · filler words removed"
         );
         assert_eq!(
-            serde_json::to_string(&Provider::OpenAi).unwrap(),
-            r#""openai""#
+            describe_session(&serde_json::json!({})),
+            "Connected to ElevenLabs · language: auto"
         );
     }
 }

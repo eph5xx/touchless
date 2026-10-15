@@ -718,34 +718,34 @@ input:focus {
 
 /* Settings */
 
-.provider {
+.api-key {
   padding: 16px 18px;
 }
 
-.provider-head {
+.api-key-head {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 2px;
 }
 
-.provider-name {
+.api-key-name {
   font-weight: 600;
   font-size: 15px;
 }
 
-.provider-description {
+.api-key-description {
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 13px;
 }
 
-.provider-form {
+.api-key-form {
   display: flex;
   gap: 8px;
 }
 
-.provider-form input {
+.api-key-form input {
   flex: 1;
 }
 
@@ -759,6 +759,99 @@ input:focus {
 
 .list .row + .row {
   border-top: 1px solid var(--border);
+}
+
+.list .row.column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.count {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+select {
+  font: inherit;
+  flex-shrink: 0;
+  max-width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+textarea {
+  font: inherit;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chips:empty {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chip-remove {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.chip-remove:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.chips-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .row-title {
