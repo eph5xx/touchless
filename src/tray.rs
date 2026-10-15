@@ -15,7 +15,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open, &history, &settings, &separator, &quit])?;
 
     TrayIconBuilder::with_id("touchless")
-        .icon(tauri::include_image!("icons/64x64.png"))
+        .icon(tauri::include_image!("icons/tray.png"))
+        .icon_as_template(true)
         .tooltip("Touchless")
         .menu(&menu)
         .show_menu_on_left_click(true)
