@@ -67,13 +67,13 @@ impl TranscriptionOptions {
             }
         }
         if keyterms.len() > MAX_KEYTERMS {
-            return Err(format!("Use at most {MAX_KEYTERMS} key terms"));
+            return Err(format!("Use at most {MAX_KEYTERMS} custom words"));
         }
 
         let transcript_edit = self.transcript_edit.trim().to_owned();
         if transcript_edit.chars().count() > MAX_EDIT_INSTRUCTION_CHARS {
             return Err(format!(
-                "The edit instruction can be at most {MAX_EDIT_INSTRUCTION_CHARS} characters"
+                "The rewrite instruction can be at most {MAX_EDIT_INSTRUCTION_CHARS} characters"
             ));
         }
 
@@ -229,7 +229,7 @@ fn describe_session(config: &serde_json::Value) -> String {
     if let Some(keyterms) = config["keyterms"].as_array()
         && !keyterms.is_empty()
     {
-        parts.push(format!("{} key terms", keyterms.len()));
+        parts.push(format!("{} custom words", keyterms.len()));
     }
     if config["no_verbatim"].as_bool() == Some(true) {
         parts.push("filler words removed".into());
@@ -398,7 +398,7 @@ mod tests {
         });
         assert_eq!(
             describe_session(&config),
-            "Connected to ElevenLabs · language: eng · 2 key terms · filler words removed"
+            "Connected to ElevenLabs · language: eng · 2 custom words · filler words removed"
         );
         assert_eq!(
             describe_session(&serde_json::json!({})),

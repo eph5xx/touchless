@@ -95,7 +95,7 @@ function renderApiKey(status, draft) {
     }),
   );
 
-  const [badgeKind, badgeText] = status.saved ? ["success", "Saved in Keychain"] : ["", "Not set"];
+  const [badgeKind, badgeText] = status.saved ? ["success", "Saved"] : ["", "Not set"];
   return [
     el(
       "div",
@@ -103,7 +103,11 @@ function renderApiKey(status, draft) {
       el("span", { className: "api-key-name" }, "ElevenLabs"),
       el("span", { className: `badge ${badgeKind}` }, badgeText),
     ),
-    el("p", { className: "api-key-description" }, "Realtime speech-to-text (Scribe v2)."),
+    el(
+      "p",
+      { className: "api-key-description" },
+      "Turns your speech into text. Your key stays in your Mac's Keychain.",
+    ),
     el("div", { className: "api-key-form" }, input, save, test, remove),
   ];
 }
@@ -207,10 +211,10 @@ export function renderPermissions(permissions) {
   const row = (title, subtitle, granted, actions) =>
     el(
       "div",
-      { className: "row" },
+      { className: "row wrap" },
       el(
         "div",
-        {},
+        { className: "row-text" },
         el("div", { className: "row-title" }, title),
         el("div", { className: "row-subtitle" }, subtitle),
       ),
@@ -231,7 +235,7 @@ export function renderPermissions(permissions) {
   $("permissions").replaceChildren(
     row(
       "Input Monitoring",
-      "Needed for the ⌘⌥ shortcut. Restart Touchless after allowing it.",
+      "Lets ⌘⌥ work in any app. Restart after allowing.",
       permissions.input_monitoring,
       [
         ["Open Settings", () => invoke("open_privacy_settings", { pane: "input_monitoring" })],
@@ -240,7 +244,7 @@ export function renderPermissions(permissions) {
     ),
     row(
       "Accessibility",
-      "Needed to paste transcripts into other apps.",
+      "Lets Touchless paste into other apps.",
       permissions.accessibility,
       [
         ["Grant access", () => invoke("request_accessibility")],

@@ -30,8 +30,8 @@
         </a>
       </nav>
       <div class="sidebar-footer">
-        <span class="shortcut"><kbd>⌘</kbd><kbd>⌥</kbd></span>
-        <span>tap anywhere to dictate</span>
+        <span class="shortcut">Tap <kbd>⌘</kbd><kbd>⌥</kbd></span>
+        <span>to dictate in any app</span>
       </div>
     </aside>
 
@@ -41,7 +41,7 @@
       <section id="page-dictate" class="page">
         <header class="page-header" data-tauri-drag-region>
           <h1>Dictate</h1>
-          <p class="subtitle">Speak, and Touchless types it into whatever app you're using.</p>
+          <p class="subtitle">Tap ⌘⌥, talk, and your words appear where you type.</p>
         </header>
 
         <div id="callouts" class="callouts"></div>
@@ -75,7 +75,7 @@
       <section id="page-history" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
           <h1>History</h1>
-          <p class="subtitle">Everything you've dictated, stored locally on this Mac.</p>
+          <p class="subtitle">Your past dictations, saved only on this Mac.</p>
         </header>
         <div class="search">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
@@ -91,18 +91,18 @@
       <section id="page-settings" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
           <h1>Settings</h1>
-          <p class="subtitle">Your ElevenLabs API key is stored in your macOS Keychain.</p>
+          <p class="subtitle">Set up how Touchless listens and types.</p>
         </header>
 
-        <h2 class="section-title">ElevenLabs API key</h2>
+        <h2 class="section-title">API key</h2>
         <div id="api-key" class="card api-key"></div>
 
-        <h2 class="section-title">Transcription</h2>
+        <h2 class="section-title">Speech</h2>
         <div class="card list">
           <div class="row">
             <div>
-              <div class="row-title">Primary language</div>
-              <div class="row-subtitle">The language you usually speak.</div>
+              <div class="row-title">Main language</div>
+              <div class="row-subtitle">The language you speak most.</div>
             </div>
             <select id="language-code"></select>
           </div>
@@ -110,7 +110,7 @@
             <div class="row-head">
               <div>
                 <div class="row-title">Other languages</div>
-                <div class="row-subtitle">Languages you sometimes switch to. Helps pick the right one.</div>
+                <div class="row-subtitle">Languages you sometimes switch to.</div>
               </div>
               <select id="secondary-add"></select>
             </div>
@@ -119,49 +119,49 @@
           <label class="row">
             <div>
               <div class="row-title">Remove filler words</div>
-              <div class="row-subtitle">Drops “um”, “uh”, false starts and repetitions.</div>
+              <div class="row-subtitle">Cuts “um”, “uh”, and repeats.</div>
             </div>
             <input id="no-verbatim" type="checkbox" class="switch" />
           </label>
           <div class="row column">
             <div>
-              <div class="row-title">Key terms <span id="keyterms-count" class="count"></span></div>
-              <div class="row-subtitle">Names and jargon to recognize reliably. Adds 20% to the transcription cost.</div>
+              <div class="row-title">Custom words <span id="keyterms-count" class="count"></span></div>
+              <div class="row-subtitle">Names and terms to spell right. Costs 20% more.</div>
             </div>
             <div class="chips-input">
               <div id="keyterms" class="chips"></div>
-              <input id="keyterm-input" type="text" placeholder="Add a term and press Enter" autocomplete="off" spellcheck="false" />
+              <input id="keyterm-input" type="text" placeholder="Type a word, press Enter" autocomplete="off" spellcheck="false" />
             </div>
           </div>
           <div class="row column">
             <div>
-              <div class="row-title">Edit instruction</div>
-              <div class="row-subtitle">ElevenLabs rewrites each sentence following this instruction. Leave empty to turn it off. Adds 30% to the transcription cost.</div>
+              <div class="row-title">Rewrite instruction</div>
+              <div class="row-subtitle">How to clean up your text. Leave empty to skip. Costs 30% more.</div>
             </div>
             <textarea id="transcript-edit" rows="3" maxlength="2000" placeholder="Fix grammar and punctuation. Keep my wording."></textarea>
           </div>
         </div>
 
-        <h2 class="section-title">Dictation</h2>
+        <h2 class="section-title">Behavior</h2>
         <div class="card list">
           <label class="row">
             <div>
-              <div class="row-title">Paste into the active app</div>
-              <div class="row-subtitle">Types the transcript where your cursor is when you stop.</div>
+              <div class="row-title">Paste automatically</div>
+              <div class="row-subtitle">Puts the text where your cursor is.</div>
             </div>
             <input type="checkbox" class="switch" data-preference="auto_paste" />
           </label>
           <label class="row">
             <div>
-              <div class="row-title">Restore clipboard after pasting</div>
-              <div class="row-subtitle">Puts back whatever you had copied before.</div>
+              <div class="row-title">Keep my clipboard</div>
+              <div class="row-subtitle">Restores what you copied before.</div>
             </div>
             <input type="checkbox" class="switch" data-preference="restore_clipboard" />
           </label>
           <label class="row">
             <div>
-              <div class="row-title">Show floating pill</div>
-              <div class="row-subtitle">Live status and text at the bottom of the screen while dictating.</div>
+              <div class="row-title">Show live preview</div>
+              <div class="row-subtitle">Shows your words at the bottom of the screen as you talk.</div>
             </div>
             <input type="checkbox" class="switch" data-preference="show_overlay" />
           </label>

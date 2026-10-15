@@ -28,12 +28,12 @@ body {
   height: 48px;
   padding: 0 18px 0 16px;
   border-radius: 999px;
-  background: rgba(22, 22, 36, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: rgba(7, 10, 20, 0.88);
+  border: 1px solid rgba(179, 228, 254, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(179, 228, 254, 0.08);
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  color: #f2f2fa;
+  color: #eaf4ff;
   animation: appear 0.18s ease-out;
 }
 
@@ -61,8 +61,8 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ff4d6d;
-  box-shadow: 0 0 0 0 rgba(255, 77, 109, 0.6);
+  background: #b874f7;
+  box-shadow: 0 0 0 0 rgba(184, 116, 247, 0.6);
   animation: pulse 1.4s ease-out infinite;
 }
 
@@ -124,7 +124,7 @@ svg {
 
 .partial,
 .placeholder {
-  color: rgba(242, 242, 250, 0.55);
+  color: rgba(234, 244, 255, 0.55);
 }
 
 .failed #text {
@@ -136,7 +136,7 @@ svg {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: rgba(242, 242, 250, 0.6);
+  color: rgba(234, 244, 255, 0.6);
 }
 
 .finalizing .meta {
@@ -149,10 +149,10 @@ svg {
 
 @keyframes pulse {
   70% {
-    box-shadow: 0 0 0 8px rgba(255, 77, 109, 0);
+    box-shadow: 0 0 0 8px rgba(184, 116, 247, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 77, 109, 0);
+    box-shadow: 0 0 0 0 rgba(184, 116, 247, 0);
   }
 }
 

@@ -8,7 +8,7 @@ const STATUS = {
   },
   connecting: {
     label: "Connecting",
-    hint: "Start talking. Audio is buffered while connecting.",
+    hint: "Go ahead and talk. Connecting…",
     action: "Stop dictation",
   },
   listening: {
@@ -18,7 +18,7 @@ const STATUS = {
   },
   finalizing: {
     label: "Finalizing",
-    hint: "Waiting for the last words from ElevenLabs…",
+    hint: "Finishing up…",
     action: "Finalizing",
   },
 };
