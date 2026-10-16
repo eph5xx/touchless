@@ -13,6 +13,12 @@ const TRAY_ID: &str = "touchless";
 /// Whether the menu bar should show the recording icon.
 static RECORDING: AtomicBool = AtomicBool::new(false);
 
+#[derive(Clone, Copy)]
+enum RecordingInk {
+    Black,
+    White,
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Touchless", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
@@ -54,7 +60,10 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
         // different threads still settle on the latest state.
         let recording = RECORDING.load(Ordering::Relaxed);
         let icon = if recording {
-            include_image!("icons/recording.png")
+            match recording_ink(&tray) {
+                RecordingInk::Black => include_image!("icons/recording-black.png"),
+                RecordingInk::White => include_image!("icons/recording.png"),
+            }
         } else {
             include_image!("icons/tray.png")
         };
@@ -64,6 +73,44 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
             eprintln!("could not update the tray icon: {error}");
         }
     });
+}
+
+/// Matches the colored recording icon to the ink macOS uses for the template icon.
+#[cfg(target_os = "macos")]
+fn recording_ink(tray: &tauri::tray::TrayIcon) -> RecordingInk {
+    use objc2_app_kit::NSAppearanceCustomization;
+    use objc2_foundation::{MainThreadMarker, NSArray, NSString};
+
+    tray.with_inner_tray_icon(|tray| {
+        let Some(status_item) = tray.ns_status_item() else {
+            return RecordingInk::White;
+        };
+        let Some(mtm) = MainThreadMarker::new() else {
+            return RecordingInk::White;
+        };
+        let Some(button) = status_item.button(mtm) else {
+            return RecordingInk::White;
+        };
+
+        let aqua = NSString::from_str("NSAppearanceNameAqua");
+        let dark_aqua = NSString::from_str("NSAppearanceNameDarkAqua");
+        let appearances = NSArray::from_slice(&[&*aqua, &*dark_aqua]);
+        let is_dark = button
+            .effectiveAppearance()
+            .bestMatchFromAppearancesWithNames(&appearances)
+            .is_some_and(|name| name.isEqualToString(&dark_aqua));
+        if is_dark {
+            RecordingInk::White
+        } else {
+            RecordingInk::Black
+        }
+    })
+    .unwrap_or(RecordingInk::White)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn recording_ink(_tray: &tauri::tray::TrayIcon) -> RecordingInk {
+    RecordingInk::White
 }
 
 /// Shows and focuses the main window, optionally switching to a page.
