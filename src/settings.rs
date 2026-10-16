@@ -2,10 +2,11 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::db::Db;
+use crate::{db::Db, shortcut::Shortcut};
 
 const PREFERENCES_KEY: &str = "preferences";
 const TRANSCRIPTION_KEY: &str = "transcription";
+const SHORTCUT_KEY: &str = "shortcut";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
@@ -107,6 +108,8 @@ pub struct SettingsView {
     api_key: ApiKeyStatus,
     preferences: Preferences,
     transcription: TranscriptionOptions,
+    shortcut: Shortcut,
+    shortcut_is_default: bool,
 }
 
 /// The ElevenLabs API key lives in the macOS Keychain; everything else lives in SQLite.
@@ -114,6 +117,7 @@ pub struct Settings {
     api_key: Mutex<Option<String>>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
+    shortcut: Mutex<Shortcut>,
 }
 
 impl Settings {
@@ -126,11 +130,13 @@ impl Settings {
             api_key: Mutex::new(api_key),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_json(db, TRANSCRIPTION_KEY)),
+            shortcut: Mutex::new(load_shortcut(db)),
         }
     }
 
     pub fn view(&self) -> SettingsView {
         let key = self.api_key();
+        let shortcut = self.shortcut();
         SettingsView {
             api_key: ApiKeyStatus {
                 saved: key.is_some(),
@@ -138,6 +144,8 @@ impl Settings {
             },
             preferences: self.preferences(),
             transcription: self.transcription(),
+            shortcut_is_default: shortcut == Shortcut::default(),
+            shortcut,
         }
     }
 
@@ -187,6 +195,23 @@ impl Settings {
         *self.transcription.lock().unwrap() = options;
         Ok(())
     }
+
+    pub fn shortcut(&self) -> Shortcut {
+        self.shortcut.lock().unwrap().clone()
+    }
+
+    pub fn set_shortcut(&self, db: &Db, shortcut: Shortcut) -> Result<(), String> {
+        save_json(db, SHORTCUT_KEY, &shortcut)
+            .map_err(|error| format!("could not save the shortcut: {error}"))?;
+        *self.shortcut.lock().unwrap() = shortcut;
+        Ok(())
+    }
+}
+
+fn load_shortcut(db: &Db) -> Shortcut {
+    load_json::<Shortcut>(db, SHORTCUT_KEY)
+        .normalized()
+        .unwrap_or_default()
 }
 
 fn load_json<T: DeserializeOwned + Default>(db: &Db, key: &str) -> T {
@@ -311,6 +336,25 @@ mod tests {
         assert!(!preferences.auto_paste);
         assert!(preferences.restore_clipboard);
         assert!(preferences.show_overlay);
+    }
+
+    #[test]
+    fn loads_saved_shortcut_or_falls_back_to_default() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(load_shortcut(&db), Shortcut::default());
+
+        db.set_setting(SHORTCUT_KEY, r#"{"kind":"tap","keys":[]}"#)
+            .unwrap();
+        assert_eq!(load_shortcut(&db), Shortcut::default());
+
+        db.set_setting(SHORTCUT_KEY, r#"{"kind":"tap","keys":["right_option"]}"#)
+            .unwrap();
+        assert_eq!(
+            load_shortcut(&db),
+            Shortcut::Tap {
+                keys: vec![crate::shortcut::Key::RightOption]
+            }
+        );
     }
 
     #[test]

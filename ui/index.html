@@ -29,10 +29,6 @@
           Settings
         </a>
       </nav>
-      <div class="sidebar-footer">
-        <span class="shortcut">Tap <kbd>⌘</kbd><kbd>⌥</kbd></span>
-        <span>to dictate in any app</span>
-      </div>
     </aside>
 
     <main>
@@ -41,7 +37,7 @@
       <section id="page-dictate" class="page">
         <header class="page-header" data-tauri-drag-region>
           <h1>Dictate</h1>
-          <p class="subtitle">Tap ⌘⌥, talk, and your words appear where you type.</p>
+          <p id="dictate-subtitle" class="subtitle">Talk, and your words appear where you type.</p>
         </header>
 
         <div id="callouts" class="callouts"></div>
@@ -56,7 +52,7 @@
           <div class="recorder-info">
             <div id="status-label" class="status-label">Ready</div>
             <div id="timer" class="timer">00:00</div>
-            <div id="status-hint" class="hint">Tap <kbd>⌘</kbd> <kbd>⌥</kbd> or click the button to start.</div>
+            <div id="status-hint" class="hint">Click the button to start.</div>
           </div>
         </div>
 
@@ -84,7 +80,7 @@
         <div id="history-list" class="history"></div>
         <div id="history-empty" class="empty" hidden>
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-          <p id="history-empty-text">No dictations yet. Tap <kbd>⌘</kbd> <kbd>⌥</kbd> to record your first one.</p>
+          <p id="history-empty-text">No dictations yet.</p>
         </div>
       </section>
 
@@ -96,6 +92,21 @@
 
         <h2 class="section-title">API key</h2>
         <div id="api-key" class="card api-key"></div>
+
+        <h2 class="section-title">Shortcut</h2>
+        <div class="card list">
+          <div class="row wrap">
+            <div class="row-text">
+              <div class="row-title">Start and stop dictation</div>
+              <div id="shortcut-hint" class="row-subtitle"></div>
+            </div>
+            <div class="row-actions">
+              <span id="shortcut-keys" class="shortcut-keys"></span>
+              <button id="shortcut-reset" class="ghost small" type="button">Reset</button>
+              <button id="shortcut-change" class="secondary small" type="button">Change</button>
+            </div>
+          </div>
+        </div>
 
         <h2 class="section-title">Speech</h2>
         <div class="card list">

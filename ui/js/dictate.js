@@ -1,24 +1,36 @@
-import { $, el, invoke, formatDuration, shake, copyText } from "./util.js";
+import {
+  $,
+  el,
+  invoke,
+  formatDuration,
+  shake,
+  copyText,
+  shortcutKeys,
+  shortcutText,
+  shortcutVerb,
+} from "./util.js";
 
+// `press` is e.g. ["Tap ", <kbd>⌥</kbd>, " ", <kbd>⌘</kbd>], or null before settings load.
 const STATUS = {
   idle: {
     label: "Ready",
-    hint: "Tap <kbd>⌘</kbd> <kbd>⌥</kbd> or click the button to start.",
+    hint: (press) =>
+      press ? [...press, " or click the button to start."] : ["Click the button to start."],
     action: "Start dictation",
   },
   connecting: {
     label: "Connecting",
-    hint: "Go ahead and talk. Connecting…",
+    hint: () => ["Go ahead and talk. Connecting…"],
     action: "Stop dictation",
   },
   listening: {
     label: "Listening",
-    hint: "Tap <kbd>⌘</kbd> <kbd>⌥</kbd> again to finish.",
+    hint: (press) => (press ? [...press, " again to finish."] : ["Click the button to finish."]),
     action: "Stop dictation",
   },
   finalizing: {
     label: "Finalizing",
-    hint: "Finishing up…",
+    hint: () => ["Finishing up…"],
     action: "Finalizing",
   },
 };
@@ -26,8 +38,10 @@ const STATUS = {
 let state = null;
 let stoppedAt = null;
 let timerHandle = null;
+let getShortcut = () => null;
 
-export function initDictate() {
+export function initDictate(shortcut) {
+  getShortcut = shortcut;
   $("record").addEventListener("click", () => {
     if (state?.status === "finalizing") shake($("record"));
     invoke("toggle_recording");
@@ -49,7 +63,7 @@ export function renderRecorder(next) {
 
   $("status-label").textContent = info.label;
   $("status-label").className = `status-label ${status}`;
-  $("status-hint").innerHTML = info.hint;
+  renderShortcut();
   $("nav-dot").className = `dot ${status}`;
 
   $("committed").textContent = state.committed;
@@ -66,6 +80,17 @@ export function renderRecorder(next) {
   }
 }
 
+/** Renders the text that mentions the shortcut. */
+export function renderShortcut() {
+  const shortcut = getShortcut();
+  const verb = shortcut && shortcutVerb(shortcut);
+  $("dictate-subtitle").textContent = shortcut
+    ? `${verb} ${shortcutText(shortcut)}, talk, and your words appear where you type.`
+    : "Talk, and your words appear where you type.";
+  const press = shortcut ? [`${verb} `, ...shortcutKeys(shortcut)] : null;
+  $("status-hint").replaceChildren(...STATUS[state?.status ?? "idle"].hint(press));
+}
+
 function renderTimer() {
   const end = stoppedAt ?? Date.now();
   const active = state && state.status !== "idle" && state.started_at;
@@ -78,15 +103,15 @@ export function onToggleIgnored() {
 
 const HOTKEY_MESSAGES = {
   needs_permission: {
-    text: "The ⌘⌥ shortcut needs Input Monitoring permission. Grant it, then restart Touchless.",
+    text: (name) => `${name} needs Input Monitoring permission. Grant it, then restart Touchless.`,
     actions: [
       ["Open Settings", () => invoke("open_privacy_settings", { pane: "input_monitoring" })],
       ["Restart", () => invoke("restart_app")],
     ],
   },
   unavailable: {
-    text: "The ⌘⌥ shortcut could not be started. You can still use the button.",
-    actions: [],
+    text: (name) => `${name} could not be started. Choose another one, or use the button.`,
+    actions: [["Change shortcut", () => (location.hash = "#settings")]],
   },
 };
 
@@ -114,7 +139,10 @@ export function renderCallouts({ recorder, settings, permissions }) {
   }
 
   const hotkey = HOTKEY_MESSAGES[recorder?.hotkey];
-  if (hotkey) callouts.push(callout("warning", hotkey.text, hotkey.actions));
+  if (hotkey) {
+    const name = settings ? `The ${shortcutText(settings.shortcut)} shortcut` : "The shortcut";
+    callouts.push(callout("warning", hotkey.text(name), hotkey.actions));
+  }
 
   if (settings?.preferences.auto_paste && permissions && !permissions.accessibility) {
     callouts.push(

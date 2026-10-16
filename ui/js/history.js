@@ -1,8 +1,21 @@
-import { $, el, icon, ICONS, invoke, formatDuration, copyText, toast } from "./util.js";
+import {
+  $,
+  el,
+  icon,
+  ICONS,
+  invoke,
+  formatDuration,
+  copyText,
+  toast,
+  shortcutKeys,
+  shortcutVerb,
+} from "./util.js";
 
 let entries = [];
+let getShortcut = () => null;
 
-export function initHistory() {
+export function initHistory(shortcut) {
+  getShortcut = shortcut;
   $("history-search").addEventListener("input", render);
 }
 
@@ -50,9 +63,18 @@ function render() {
 
   $("history-list").replaceChildren(...nodes);
   $("history-empty").hidden = visible.length > 0;
-  $("history-empty-text").innerHTML = query
-    ? "No transcripts match your search."
-    : "No dictations yet. Tap <kbd>⌘</kbd> <kbd>⌥</kbd> to record your first one.";
+  $("history-empty-text").replaceChildren(...emptyText(query));
+}
+
+function emptyText(query) {
+  if (query) return ["No transcripts match your search."];
+  const shortcut = getShortcut();
+  if (!shortcut) return ["No dictations yet."];
+  return [
+    `No dictations yet. ${shortcutVerb(shortcut)} `,
+    ...shortcutKeys(shortcut),
+    " to record your first one.",
+  ];
 }
 
 function renderEntry(entry) {
