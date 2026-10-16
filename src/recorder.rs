@@ -16,6 +16,7 @@ use crate::{
     overlay::Overlay,
     paste::{self, Delivery},
     settings::Settings,
+    tray,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -313,6 +314,7 @@ impl Recorder {
 
     fn emit(&self, snapshot: &Snapshot) {
         let _ = self.app.emit("recorder-state", snapshot);
+        tray::set_recording(&self.app, snapshot.status != Status::Idle);
     }
 }
 
