@@ -128,22 +128,16 @@
 
         <h2 class="section-title">Speech</h2>
         <div class="card list">
-          <div class="row">
-            <div>
-              <div class="row-title">Main language</div>
-              <div class="row-subtitle">The language you speak most.</div>
-            </div>
-            <select id="language-code"></select>
-          </div>
           <div class="row column">
-            <div class="row-head">
-              <div>
-                <div class="row-title">Other languages</div>
-                <div class="row-subtitle">Languages you sometimes switch to.</div>
-              </div>
-              <select id="secondary-add"></select>
+            <div>
+              <div class="row-title">Languages</div>
+              <div id="languages-hint" class="row-subtitle"></div>
             </div>
-            <div id="secondary-languages" class="chips"></div>
+            <div id="languages" class="chips"></div>
+            <div class="language-picker">
+              <input id="language-search" type="text" role="combobox" aria-expanded="false" aria-controls="language-results" aria-autocomplete="list" placeholder="Add a language" autocomplete="off" spellcheck="false" />
+              <ul id="language-results" class="language-results" role="listbox" hidden></ul>
+            </div>
           </div>
           <label class="row">
             <div>

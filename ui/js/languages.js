@@ -106,3 +106,55 @@ const NAMES = new Map(LANGUAGES);
 export function languageName(code) {
   return NAMES.get(code) ?? code;
 }
+
+/** Lowercase without accents, so "maori" matches "Māori". */
+function fold(text) {
+  return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
+function attempt(read) {
+  try {
+    return read();
+  } catch {
+    return null;
+  }
+}
+
+let index = null;
+
+// Built on first search: the web view knows each language's own name and two-letter code.
+function searchIndex() {
+  index ??= LANGUAGES.map(([code, name]) => {
+    const short = attempt(() => Intl.getCanonicalLocales(code)[0]);
+    const native = attempt(() => new Intl.DisplayNames([code], { type: "language" }).of(code));
+    return {
+      code,
+      name,
+      codes: [code, short].filter(Boolean).map(fold),
+      names: [name, native].filter((text) => text && text !== code).map(fold),
+    };
+  });
+  return index;
+}
+
+function rank(entry, query) {
+  if (entry.codes.includes(query)) return 0;
+  if (entry.names.some((name) => name.startsWith(query))) return 1;
+  if (entry.names.some((name) => name.split(/[\s-]+/).some((word) => word.startsWith(query)))) return 2;
+  if (entry.names.some((name) => name.includes(query))) return 3;
+  return null;
+}
+
+/** Languages matching `query` by name, own name or code, best matches first. */
+export function searchLanguages(query, exclude = []) {
+  const skip = new Set(exclude);
+  const folded = fold(query.trim());
+  const matches = [];
+  for (const entry of searchIndex()) {
+    if (skip.has(entry.code)) continue;
+    const score = folded ? rank(entry, folded) : 0;
+    if (score !== null) matches.push({ entry, score });
+  }
+  // Array sort is stable, so each tier stays alphabetical.
+  return matches.sort((a, b) => a.score - b.score).map(({ entry }) => [entry.code, entry.name]);
+}
