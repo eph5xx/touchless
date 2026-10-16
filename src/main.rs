@@ -13,7 +13,6 @@ mod recorder;
 mod settings;
 mod shortcut;
 mod tray;
-mod updater;
 
 use std::sync::Arc;
 
@@ -26,7 +25,6 @@ use recorder::{Recorder, Snapshot};
 use settings::{Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
 use shortcut::Shortcut;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use updater::{UpdateView, Updater};
 
 #[tauri::command]
 fn get_state(recorder: State<'_, Arc<Recorder>>) -> Snapshot {
@@ -209,35 +207,12 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
-#[tauri::command]
-fn get_update_state(updater: State<'_, Arc<Updater>>) -> UpdateView {
-    updater.view()
-}
-
-#[tauri::command]
-async fn check_for_updates(updater: State<'_, Arc<Updater>>) -> Result<UpdateView, String> {
-    updater.check(true).await;
-    Ok(updater.view())
-}
-
-#[tauri::command]
-fn install_update(updater: State<'_, Arc<Updater>>) -> Result<UpdateView, String> {
-    updater.install()?;
-    Ok(updater.view())
-}
-
-#[tauri::command]
-fn open_release_page(updater: State<'_, Arc<Updater>>) -> Result<(), String> {
-    updater.open_release_page()
-}
-
 fn main() {
     // The WebSocket client uses rustls; pin its crypto backend.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_state,
             toggle_recording,
@@ -257,11 +232,7 @@ fn main() {
             get_permissions,
             request_accessibility,
             open_privacy_settings,
-            restart_app,
-            get_update_state,
-            check_for_updates,
-            install_update,
-            open_release_page
+            restart_app
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -281,10 +252,6 @@ fn main() {
             let hotkey = Hotkey::start(app.handle(), shortcut, move || hotkey_recorder.toggle());
             recorder.set_hotkey(hotkey.status());
             app.manage(hotkey);
-
-            let updater = Arc::new(Updater::new(app.handle().clone()));
-            app.manage(Arc::clone(&updater));
-            updater::start_background_checks(updater);
 
             tray::create(app.handle())?;
             Ok(())

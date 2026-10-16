@@ -1,23 +1,16 @@
 //! Menu bar icon with shortcuts to the main window.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use tauri::{
-    AppHandle, Emitter, Manager, Wry, include_image,
+    AppHandle, Emitter, Manager, include_image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
 };
 
-use crate::{recorder::Status, updater::Updater};
+use crate::recorder::Status;
 
 const TRAY_ID: &str = "touchless";
-const CHECK_FOR_UPDATES: &str = "Check for Updates…";
-
-/// The menu item that checks for updates, or offers the one found.
-struct UpdateItem {
-    item: MenuItem<Wry>,
-    label: Mutex<String>,
-}
 
 /// The latest icon requested, including changes waiting for the main thread.
 static ICON_STATE: Mutex<IconState> = Mutex::new(IconState::Idle);
@@ -49,17 +42,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Touchless", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let updates = MenuItem::with_id(app, "updates", CHECK_FOR_UPDATES, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Touchless", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[&open, &history, &settings, &updates, &separator, &quit],
-    )?;
-    app.manage(UpdateItem {
-        item: updates,
-        label: Mutex::new(CHECK_FOR_UPDATES.into()),
-    });
+    let menu = Menu::with_items(app, &[&open, &history, &settings, &separator, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(include_image!("icons/tray.png"))
@@ -71,43 +56,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_main(app, None),
             "history" => show_main(app, Some("history")),
             "settings" => show_main(app, Some("settings")),
-            "updates" => {
-                show_main(app, Some("settings"));
-                let updater = Arc::clone(&app.state::<Arc<Updater>>());
-                tauri::async_runtime::spawn(async move { updater.check(true).await });
-            }
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
     Ok(())
-}
-
-/// Names the update in the menu, or goes back to "Check for Updates…".
-pub fn set_update_version(app: &AppHandle, version: Option<&str>) {
-    let Some(updates) = app.try_state::<UpdateItem>() else {
-        return;
-    };
-    let label = match version {
-        Some(version) => format!("Update to v{version}…"),
-        None => CHECK_FOR_UPDATES.into(),
-    };
-    {
-        let mut current = updates.label.lock().unwrap();
-        if *current == label {
-            return;
-        }
-        *current = label;
-    }
-    // Posted like the icon change, so the caller never waits on the main thread.
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let updates = handle.state::<UpdateItem>();
-        let label = updates.label.lock().unwrap().clone();
-        if let Err(error) = updates.item.set_text(label) {
-            eprintln!("could not update the tray menu: {error}");
-        }
-    });
 }
 
 /// Shows red while recording and yellow while finalizing the dictation.

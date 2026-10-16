@@ -9,7 +9,6 @@ import {
 import { initHistory, loadHistory } from "./history.js";
 import { loadPlugins } from "./plugins.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
-import { initUpdates, renderUpdates } from "./updates.js";
 
 const PAGES = ["dictate", "history", "plugins", "settings"];
 const DELIVERY_MESSAGES = {
@@ -51,7 +50,6 @@ initSettings((settings) => {
   renderShortcut();
   renderCallouts(app);
 });
-initUpdates();
 
 window.addEventListener("hashchange", () => showPage(currentPage()));
 // Permissions are granted in System Settings, so re-check when the user comes back.
@@ -72,7 +70,6 @@ await listen("transcripts-changed", () => {
 await listen("plugins-changed", () => {
   if (currentPage() === "plugins") loadPlugins();
 });
-await listen("update-state", ({ payload }) => renderUpdates(payload));
 await listen("dictation-finished", ({ payload }) => {
   if (payload.delivery && document.hasFocus()) toast(DELIVERY_MESSAGES[payload.delivery]);
 });
@@ -81,6 +78,5 @@ app.recorder = await invoke("get_state");
 app.settings = await invoke("get_settings");
 renderRecorder(app.recorder);
 renderSettings(app.settings);
-renderUpdates(await invoke("get_update_state"));
 await refreshPermissions();
 showPage(currentPage());
