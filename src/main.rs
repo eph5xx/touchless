@@ -19,7 +19,7 @@ use permissions::{Permissions, PrivacyPane};
 use recorder::{Recorder, Snapshot};
 use settings::{Preferences, Settings, SettingsView, TranscriptionOptions};
 use shortcut::Shortcut;
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 #[tauri::command]
 fn get_state(recorder: State<'_, Arc<Recorder>>) -> Snapshot {
@@ -79,11 +79,13 @@ fn update_transcription(
 
 #[tauri::command]
 fn update_preferences(
+    app: AppHandle,
     db: State<'_, Db>,
     settings: State<'_, Settings>,
     preferences: Preferences,
 ) -> Result<SettingsView, String> {
     settings.set_preferences(&db, preferences)?;
+    let _ = app.emit("preferences-changed", settings.preferences());
     Ok(settings.view())
 }
 

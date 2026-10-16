@@ -67,7 +67,9 @@ export function initSettings(handleChange) {
 export function renderSettings(settings) {
   current = settings;
   for (const input of document.querySelectorAll("[data-preference]")) {
-    input.checked = Boolean(settings.preferences[input.dataset.preference]);
+    const value = settings.preferences[input.dataset.preference];
+    if (input.type === "checkbox") input.checked = Boolean(value);
+    else input.value = value;
   }
   const restore = document.querySelector('[data-preference="restore_clipboard"]');
   restore.disabled = !settings.preferences.auto_paste;
@@ -258,7 +260,7 @@ function update(settings) {
 async function savePreferences() {
   const preferences = { ...current.preferences };
   for (const input of document.querySelectorAll("[data-preference]")) {
-    preferences[input.dataset.preference] = input.checked;
+    preferences[input.dataset.preference] = input.type === "checkbox" ? input.checked : input.value;
   }
   try {
     update(await invoke("update_preferences", { preferences }));

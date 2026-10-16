@@ -15,7 +15,7 @@ use crate::{
     microphone::Microphone,
     overlay::Overlay,
     paste::{self, Delivery},
-    settings::Settings,
+    settings::{OverlayStyle, Settings},
     tray,
 };
 
@@ -152,7 +152,7 @@ impl Recorder {
                 drop(inner);
                 self.emit(&snapshot);
 
-                if self.app.state::<Settings>().preferences().show_overlay {
+                if self.app.state::<Settings>().preferences().overlay != OverlayStyle::Off {
                     self.overlay.show();
                 }
 

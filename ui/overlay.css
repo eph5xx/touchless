@@ -23,8 +23,8 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 180px;
-  max-width: 100%;
+  box-sizing: border-box;
+  width: 280px;
   height: 48px;
   padding: 0 18px 0 16px;
   border-radius: 999px;
@@ -127,8 +127,30 @@ svg {
   color: rgba(234, 244, 255, 0.55);
 }
 
+/* Show the start of an error, since it says what went wrong. */
+.failed .text {
+  justify-content: flex-start;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .failed #text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #ffb3bd;
+}
+
+[data-style="minimal"] .pill {
+  width: auto;
+  height: 36px;
+  gap: 8px;
+  padding: 0 14px 0 12px;
+}
+
+[data-style="minimal"] .text {
+  display: none;
 }
 
 .meta {
