@@ -1,5 +1,6 @@
 import { $, el, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "./util.js";
-import { LANGUAGES, languageName } from "./languages.js";
+import { languageName } from "./languages.js";
+import { initLanguagePicker, refreshLanguagePicker } from "./language-picker.js";
 
 const MAX_KEYTERMS = 50;
 const REWRITE_HINTS = {
@@ -50,19 +51,8 @@ export function initSettings(handleChange) {
     if (recordingShortcut) invoke("cancel_shortcut_capture");
   });
 
-  $("language-code").replaceChildren(
-    el("option", { value: "" }, "Auto-detect"),
-    ...LANGUAGES.map(([code, name]) => el("option", { value: code }, name)),
-  );
-  $("language-code").addEventListener("change", (event) =>
-    saveTranscription({ language_code: event.target.value || null }),
-  );
-  $("secondary-add").addEventListener("change", (event) => {
-    const code = event.target.value;
-    if (!code) return;
-    saveTranscription({
-      secondary_languages: [...current.transcription.secondary_languages, code],
-    });
+  initLanguagePicker($("language-search"), $("language-results"), {
+    onPick: (code) => saveLanguages([...pickedLanguages(current.transcription), code]),
   });
   $("no-verbatim").addEventListener("change", (event) =>
     saveTranscription({ no_verbatim: event.target.checked }),
@@ -196,25 +186,14 @@ function renderApiKey(provider, status, draft) {
 }
 
 function renderTranscription(options) {
-  $("language-code").value = options.language_code ?? "";
-
-  const selected = new Set(options.secondary_languages);
-  $("secondary-add").replaceChildren(
-    el("option", { value: "" }, "Add language…"),
-    ...LANGUAGES.filter(([code]) => code !== options.language_code && !selected.has(code)).map(
-      ([code, name]) => el("option", { value: code }, name),
-    ),
+  const languages = pickedLanguages(options);
+  $("languages-hint").textContent = languages.length
+    ? "The first one is your main language."
+    : "Touchless detects the language automatically. Add the languages you speak.";
+  $("languages").replaceChildren(
+    ...languages.map((code, index) => languageChip(languages, code, index === 0)),
   );
-  $("secondary-add").value = "";
-  $("secondary-languages").replaceChildren(
-    ...options.secondary_languages.map((code) =>
-      chip(languageName(code), () =>
-        saveTranscription({
-          secondary_languages: options.secondary_languages.filter((item) => item !== code),
-        }),
-      ),
-    ),
-  );
+  refreshLanguagePicker(languages);
 
   $("no-verbatim").checked = options.no_verbatim;
 
@@ -235,6 +214,46 @@ function renderTranscription(options) {
   if (document.activeElement !== $("transcript-edit")) {
     $("transcript-edit").value = options.transcript_edit;
   }
+}
+
+function languageChip(languages, code, main) {
+  const others = languages.filter((item) => item !== code);
+  return el(
+    "span",
+    { className: main ? "chip main" : "chip" },
+    languageName(code),
+    main
+      ? el("span", { className: "chip-tag" }, "Main")
+      : el(
+          "button",
+          {
+            type: "button",
+            className: "chip-action",
+            title: "Make main language",
+            onclick: () => saveLanguages([code, ...others]),
+          },
+          "☆",
+        ),
+    el(
+      "button",
+      {
+        type: "button",
+        className: "chip-remove",
+        title: "Remove",
+        onclick: () => saveLanguages(others),
+      },
+      "×",
+    ),
+  );
+}
+
+/** The user's languages, main one first. */
+function pickedLanguages(options) {
+  return [options.language_code, ...options.secondary_languages].filter(Boolean);
+}
+
+function saveLanguages(codes) {
+  return saveTranscription({ language_code: codes[0] ?? null, secondary_languages: codes.slice(1) });
 }
 
 function chip(label, onRemove) {

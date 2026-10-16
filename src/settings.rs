@@ -217,6 +217,12 @@ impl TranscriptionOptions {
                 secondary_languages.push(code);
             }
         }
+        // The first language the user picked is the main one, so other
+        // languages never stand without it.
+        let language_code = match language_code {
+            None if !secondary_languages.is_empty() => Some(secondary_languages.remove(0)),
+            code => code,
+        };
 
         let mut keyterms: Vec<String> = Vec::new();
         for term in &self.keyterms {
@@ -306,7 +312,7 @@ impl Settings {
         Self {
             api_keys: Mutex::new(api_keys),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
-            transcription: Mutex::new(load_json(db, TRANSCRIPTION_KEY)),
+            transcription: Mutex::new(load_transcription(db)),
             shortcut: Mutex::new(load_shortcut(db)),
         }
     }
@@ -384,6 +390,12 @@ impl Settings {
         *self.shortcut.lock().unwrap() = shortcut;
         Ok(())
     }
+}
+
+fn load_transcription(db: &Db) -> TranscriptionOptions {
+    let options = load_json::<TranscriptionOptions>(db, TRANSCRIPTION_KEY);
+    // Saved options were valid when written; keep them as-is if newer rules reject them.
+    options.clone().normalized().unwrap_or(options)
 }
 
 fn load_shortcut(db: &Db) -> Shortcut {
@@ -694,6 +706,31 @@ mod tests {
         .normalized()
         .unwrap();
         assert_eq!(options.language_code, None);
+    }
+
+    #[test]
+    fn loads_saved_languages_with_a_main_one() {
+        let db = Db::open_in_memory().unwrap();
+        db.set_setting(
+            TRANSCRIPTION_KEY,
+            r#"{"secondary_languages":["rus","ukr"]}"#,
+        )
+        .unwrap();
+        let options = load_transcription(&db);
+        assert_eq!(options.language_code.as_deref(), Some("rus"));
+        assert_eq!(options.secondary_languages, ["ukr"]);
+    }
+
+    #[test]
+    fn first_other_language_becomes_main() {
+        let options = TranscriptionOptions {
+            secondary_languages: vec!["rus".into(), "ukr".into()],
+            ..Default::default()
+        }
+        .normalized()
+        .unwrap();
+        assert_eq!(options.language_code.as_deref(), Some("rus"));
+        assert_eq!(options.secondary_languages, ["ukr"]);
     }
 
     #[test]

@@ -840,7 +840,8 @@ textarea {
   font-weight: 500;
 }
 
-.chip-remove {
+.chip-remove,
+.chip-action {
   padding: 0 6px;
   border-radius: 999px;
   background: transparent;
@@ -849,8 +850,64 @@ textarea {
   line-height: 1.2;
 }
 
-.chip-remove:hover:not(:disabled) {
+.chip-remove:hover:not(:disabled),
+.chip-action:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+.chip.main {
+  background: var(--accent);
+  color: white;
+}
+
+.chip.main .chip-remove:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.chip-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.language-picker {
+  position: relative;
+}
+
+.language-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.language-results li {
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.language-results li.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.language-results .language-empty {
+  color: var(--muted);
 }
 
 .chips-input {
