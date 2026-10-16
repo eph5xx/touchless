@@ -33,6 +33,9 @@
           Settings
         </a>
       </nav>
+      <div class="sidebar-footer">
+        <a id="app-version" class="app-version" href="#settings"></a>
+      </div>
     </aside>
 
     <main>
@@ -204,6 +207,28 @@
 
         <h2 class="section-title">Permissions</h2>
         <div id="permissions" class="card list"></div>
+
+        <h2 id="updates-title" class="section-title">Updates</h2>
+        <div class="card list">
+          <div class="row wrap">
+            <div class="row-text">
+              <div class="row-title">Touchless <span id="update-current"></span></div>
+              <div id="update-status" class="row-subtitle"></div>
+            </div>
+            <div class="row-actions">
+              <button id="update-notes-link" class="ghost small" type="button" hidden>Release notes</button>
+              <button id="update-action" class="secondary small" type="button">Check now</button>
+            </div>
+          </div>
+          <div id="update-notes" class="row release-notes" hidden></div>
+          <label class="row">
+            <div>
+              <div class="row-title">Check automatically</div>
+              <div class="row-subtitle">Looks for a new version every few hours.</div>
+            </div>
+            <input type="checkbox" class="switch" data-preference="check_for_updates" />
+          </label>
+        </div>
       </section>
     </main>
 
