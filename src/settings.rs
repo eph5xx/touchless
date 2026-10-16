@@ -70,7 +70,6 @@ pub struct Preferences {
     pub auto_paste: bool,
     pub restore_clipboard: bool,
     pub overlay: OverlayStyle,
-    pub check_for_updates: bool,
 }
 
 impl Default for Preferences {
@@ -79,7 +78,6 @@ impl Default for Preferences {
             auto_paste: true,
             restore_clipboard: true,
             overlay: OverlayStyle::default(),
-            check_for_updates: true,
         }
     }
 }
@@ -92,7 +90,6 @@ struct StoredPreferences {
     restore_clipboard: bool,
     overlay: Option<OverlayStyle>,
     show_overlay: Option<bool>,
-    check_for_updates: bool,
 }
 
 impl Default for StoredPreferences {
@@ -103,7 +100,6 @@ impl Default for StoredPreferences {
             restore_clipboard: defaults.restore_clipboard,
             overlay: None,
             show_overlay: None,
-            check_for_updates: defaults.check_for_updates,
         }
     }
 }
@@ -118,7 +114,6 @@ impl From<StoredPreferences> for Preferences {
             auto_paste: stored.auto_paste,
             restore_clipboard: stored.restore_clipboard,
             overlay,
-            check_for_updates: stored.check_for_updates,
         }
     }
 }
@@ -533,15 +528,6 @@ mod tests {
         assert!(!preferences.auto_paste);
         assert!(preferences.restore_clipboard);
         assert_eq!(preferences.overlay, OverlayStyle::Big);
-        assert!(preferences.check_for_updates);
-    }
-
-    #[test]
-    fn keeps_update_checks_off_when_saved_off() {
-        let preferences: Preferences =
-            serde_json::from_str(r#"{"check_for_updates":false}"#).unwrap();
-        assert!(!preferences.check_for_updates);
-        assert!(preferences.auto_paste);
     }
 
     #[test]
@@ -561,7 +547,6 @@ mod tests {
             auto_paste: false,
             restore_clipboard: true,
             overlay: OverlayStyle::Minimal,
-            check_for_updates: false,
         };
         let json = serde_json::to_string(&preferences).unwrap();
         assert!(json.contains(r#""overlay":"minimal""#));

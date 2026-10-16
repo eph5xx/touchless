@@ -52,10 +52,8 @@ has_identity || create_identity
 
 echo "==> Building Touchless"
 # Tauri runs `xattr -cr` before signing; Homebrew's xattr shadows the system one
-# and does not support -r, so prefer the system tools. Update archives are only
-# built by the release workflow, which has the updater signing key.
-APPLE_SIGNING_IDENTITY="$IDENTITY" PATH="/usr/bin:$PATH" cargo tauri build --bundles app \
-  --config '{"bundle":{"createUpdaterArtifacts":false}}'
+# and does not support -r, so prefer the system tools.
+APPLE_SIGNING_IDENTITY="$IDENTITY" PATH="/usr/bin:$PATH" cargo tauri build --bundles app
 BUILT="target/release/bundle/macos/Touchless.app"
 
 is_running() {
