@@ -10,6 +10,47 @@ const SHORTCUT_KEY: &str = "shortcut";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
+/// A service whose API key Touchless keeps in the Keychain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Provider {
+    /// Speech to text.
+    #[serde(rename = "elevenlabs")]
+    ElevenLabs,
+    /// The text model plugins use.
+    #[serde(rename = "openai")]
+    OpenAi,
+}
+
+/// Saved API keys; also the JSON stored in the Keychain item.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ApiKeys {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elevenlabs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    openai: Option<String>,
+}
+
+impl ApiKeys {
+    fn get(&self, provider: Provider) -> Option<&String> {
+        match provider {
+            Provider::ElevenLabs => self.elevenlabs.as_ref(),
+            Provider::OpenAi => self.openai.as_ref(),
+        }
+    }
+
+    fn slot(&mut self, provider: Provider) -> &mut Option<String> {
+        match provider {
+            Provider::ElevenLabs => &mut self.elevenlabs,
+            Provider::OpenAi => &mut self.openai,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.elevenlabs.is_none() && self.openai.is_none()
+    }
+}
+
 /// How the pop-up looks while dictating.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -152,18 +193,33 @@ pub struct ApiKeyStatus {
     hint: Option<String>,
 }
 
+impl ApiKeyStatus {
+    fn of(key: Option<&String>) -> Self {
+        Self {
+            saved: key.is_some(),
+            hint: key.map(|key| mask(key)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeysView {
+    elevenlabs: ApiKeyStatus,
+    openai: ApiKeyStatus,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingsView {
-    api_key: ApiKeyStatus,
+    api_keys: ApiKeysView,
     preferences: Preferences,
     transcription: TranscriptionOptions,
     shortcut: Shortcut,
     shortcut_is_default: bool,
 }
 
-/// The ElevenLabs API key lives in the macOS Keychain; everything else lives in SQLite.
+/// API keys live in the macOS Keychain; everything else lives in SQLite.
 pub struct Settings {
-    api_key: Mutex<Option<String>>,
+    api_keys: Mutex<ApiKeys>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
     shortcut: Mutex<Shortcut>,
@@ -171,12 +227,12 @@ pub struct Settings {
 
 impl Settings {
     pub fn load(db: &Db) -> Self {
-        let api_key = keychain::load().unwrap_or_else(|error| {
-            eprintln!("could not read the API key from the Keychain: {error}");
-            None
+        let api_keys = keychain::load().unwrap_or_else(|error| {
+            eprintln!("could not read API keys from the Keychain: {error}");
+            ApiKeys::default()
         });
         Self {
-            api_key: Mutex::new(api_key),
+            api_keys: Mutex::new(api_keys),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_json(db, TRANSCRIPTION_KEY)),
             shortcut: Mutex::new(load_shortcut(db)),
@@ -184,12 +240,12 @@ impl Settings {
     }
 
     pub fn view(&self) -> SettingsView {
-        let key = self.api_key();
+        let keys = self.api_keys.lock().unwrap().clone();
         let shortcut = self.shortcut();
         SettingsView {
-            api_key: ApiKeyStatus {
-                saved: key.is_some(),
-                hint: key.as_deref().map(mask),
+            api_keys: ApiKeysView {
+                elevenlabs: ApiKeyStatus::of(keys.get(Provider::ElevenLabs)),
+                openai: ApiKeyStatus::of(keys.get(Provider::OpenAi)),
             },
             preferences: self.preferences(),
             transcription: self.transcription(),
@@ -198,27 +254,28 @@ impl Settings {
         }
     }
 
-    pub fn api_key(&self) -> Option<String> {
-        self.api_key.lock().unwrap().clone()
+    pub fn api_key(&self, provider: Provider) -> Option<String> {
+        self.api_keys.lock().unwrap().get(provider).cloned()
     }
 
-    pub fn set_api_key(&self, key: &str) -> Result<(), String> {
+    pub fn set_api_key(&self, provider: Provider, key: &str) -> Result<(), String> {
         let key = key.trim();
         if key.is_empty() {
             return Err("the API key is empty".into());
         }
-        self.change_api_key(Some(key.to_owned()))
+        self.change_api_key(provider, Some(key.to_owned()))
     }
 
-    pub fn remove_api_key(&self) -> Result<(), String> {
-        self.change_api_key(None)
+    pub fn remove_api_key(&self, provider: Provider) -> Result<(), String> {
+        self.change_api_key(provider, None)
     }
 
-    fn change_api_key(&self, next: Option<String>) -> Result<(), String> {
-        let mut current = self.api_key.lock().unwrap();
-        keychain::save(next.as_deref())
-            .map_err(|error| format!("could not update the Keychain: {error}"))?;
-        *current = next;
+    fn change_api_key(&self, provider: Provider, next: Option<String>) -> Result<(), String> {
+        let mut current = self.api_keys.lock().unwrap();
+        let mut keys = current.clone();
+        *keys.slot(provider) = next;
+        keychain::save(&keys).map_err(|error| format!("could not update the Keychain: {error}"))?;
+        *current = keys;
         Ok(())
     }
 
@@ -263,7 +320,7 @@ fn load_shortcut(db: &Db) -> Shortcut {
         .unwrap_or_default()
 }
 
-fn load_json<T: DeserializeOwned + Default>(db: &Db, key: &str) -> T {
+pub fn load_json<T: DeserializeOwned + Default>(db: &Db, key: &str) -> T {
     db.get_setting(key)
         .ok()
         .flatten()
@@ -271,7 +328,7 @@ fn load_json<T: DeserializeOwned + Default>(db: &Db, key: &str) -> T {
         .unwrap_or_default()
 }
 
-fn save_json<T: Serialize>(db: &Db, key: &str, value: &T) -> Result<(), String> {
+pub fn save_json<T: Serialize>(db: &Db, key: &str, value: &T) -> Result<(), String> {
     let value = serde_json::to_string(value).map_err(|error| error.to_string())?;
     db.set_setting(key, &value)
         .map_err(|error| error.to_string())
@@ -311,62 +368,64 @@ fn describe_session(config: &serde_json::Value) -> String {
     parts.join(" · ")
 }
 
-/// The Keychain item holds a JSON object so the format can grow; only the
-/// ElevenLabs entry is used. Older builds also stored other providers' keys
-/// there, and those are dropped on the next save.
+/// The Keychain item holds every API key as one JSON object. Entries for
+/// providers Touchless no longer uses are dropped on the next save.
 #[cfg(target_os = "macos")]
 mod keychain {
-    use std::collections::BTreeMap;
-
     use security_framework::passwords::{
         delete_generic_password, get_generic_password, set_generic_password,
     };
 
+    use super::ApiKeys;
+
     const SERVICE: &str = "com.touchless.desktop";
     const ACCOUNT: &str = "api-keys";
-    const ELEVENLABS: &str = "elevenlabs";
     const ITEM_NOT_FOUND: i32 = -25300;
 
-    pub fn load() -> Result<Option<String>, String> {
+    pub fn load() -> Result<ApiKeys, String> {
         match get_generic_password(SERVICE, ACCOUNT) {
             Ok(bytes) => super::parse_stored_keys(&bytes),
-            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(ApiKeys::default()),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    pub fn save(key: Option<&str>) -> Result<(), String> {
-        let Some(key) = key else {
+    pub fn save(keys: &ApiKeys) -> Result<(), String> {
+        if keys.is_empty() {
             return match delete_generic_password(SERVICE, ACCOUNT) {
                 Err(error) if error.code() != ITEM_NOT_FOUND => Err(error.to_string()),
                 _ => Ok(()),
             };
-        };
-        let keys = BTreeMap::from([(ELEVENLABS, key)]);
-        let json = serde_json::to_vec(&keys).map_err(|error| error.to_string())?;
+        }
+        let json = serde_json::to_vec(keys).map_err(|error| error.to_string())?;
         set_generic_password(SERVICE, ACCOUNT, &json).map_err(|error| error.to_string())
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod keychain {
-    pub fn load() -> Result<Option<String>, String> {
-        Ok(None)
+    use super::ApiKeys;
+
+    pub fn load() -> Result<ApiKeys, String> {
+        Ok(ApiKeys::default())
     }
 
-    pub fn save(_key: Option<&str>) -> Result<(), String> {
+    pub fn save(_keys: &ApiKeys) -> Result<(), String> {
         Err("secure key storage is only available on macOS".into())
     }
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn parse_stored_keys(bytes: &[u8]) -> Result<Option<String>, String> {
-    let keys: std::collections::BTreeMap<String, String> =
-        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    Ok(keys
-        .get("elevenlabs")
-        .map(|key| key.trim().to_owned())
-        .filter(|key| !key.is_empty()))
+fn parse_stored_keys(bytes: &[u8]) -> Result<ApiKeys, String> {
+    let keys: ApiKeys = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let clean = |key: Option<String>| {
+        key.map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+    };
+    Ok(ApiKeys {
+        elevenlabs: clean(keys.elevenlabs),
+        openai: clean(keys.openai),
+    })
 }
 
 #[cfg(test)]
@@ -407,7 +466,10 @@ mod tests {
         };
         let json = serde_json::to_string(&preferences).unwrap();
         assert!(json.contains(r#""overlay":"minimal""#));
-        assert_eq!(serde_json::from_str::<Preferences>(&json).unwrap(), preferences);
+        assert_eq!(
+            serde_json::from_str::<Preferences>(&json).unwrap(),
+            preferences
+        );
     }
 
     #[test]
@@ -430,13 +492,37 @@ mod tests {
     }
 
     #[test]
-    fn reads_elevenlabs_key_from_legacy_keychain_data() {
-        let stored = br#"{"elevenlabs":"sk_eleven","openai":"sk_openai","jev":"x"}"#;
+    fn reads_known_keys_from_keychain_data() {
+        let stored = br#"{"elevenlabs":"sk_eleven","openai":" sk_openai ","jev":"x"}"#;
+        let keys = parse_stored_keys(stored).unwrap();
         assert_eq!(
-            parse_stored_keys(stored).unwrap().as_deref(),
+            keys.get(Provider::ElevenLabs).map(String::as_str),
             Some("sk_eleven")
         );
-        assert_eq!(parse_stored_keys(br#"{"openai":"sk"}"#).unwrap(), None);
+        assert_eq!(
+            keys.get(Provider::OpenAi).map(String::as_str),
+            Some("sk_openai")
+        );
+
+        let keys = parse_stored_keys(br#"{"openai":"sk","elevenlabs":"  "}"#).unwrap();
+        assert_eq!(keys.get(Provider::ElevenLabs), None);
+        assert_eq!(keys.get(Provider::OpenAi).map(String::as_str), Some("sk"));
+    }
+
+    #[test]
+    fn stores_only_saved_keys() {
+        let mut keys = ApiKeys::default();
+        assert!(keys.is_empty());
+        *keys.slot(Provider::OpenAi) = Some("sk_openai".into());
+        assert_eq!(
+            serde_json::to_string(&keys).unwrap(),
+            r#"{"openai":"sk_openai"}"#
+        );
+        *keys.slot(Provider::ElevenLabs) = Some("sk_eleven".into());
+        assert_eq!(
+            parse_stored_keys(&serde_json::to_vec(&keys).unwrap()).unwrap(),
+            keys
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 cpal = "0.18"
 futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }

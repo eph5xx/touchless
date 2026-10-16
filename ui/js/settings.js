@@ -2,6 +2,16 @@ import { $, el, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "
 import { LANGUAGES, languageName } from "./languages.js";
 
 const MAX_KEYTERMS = 50;
+const PROVIDERS = {
+  elevenlabs: {
+    name: "ElevenLabs",
+    description: "Turns your speech into text. Your key stays in your Mac's Keychain.",
+  },
+  openai: {
+    name: "OpenAI",
+    description: "Powers plugins like English Teacher. Your key stays in your Mac's Keychain.",
+  },
+};
 
 let onChange = () => {};
 let current = null;
@@ -75,9 +85,12 @@ export function renderSettings(settings) {
   restore.disabled = !settings.preferences.auto_paste;
   restore.closest(".row").style.opacity = settings.preferences.auto_paste ? "" : "0.5";
 
-  // Keep a typed-but-unsaved key when re-rendering.
-  const draft = $("api-key").querySelector("input")?.value ?? "";
-  $("api-key").replaceChildren(...renderApiKey(settings.api_key, draft));
+  for (const provider of Object.keys(PROVIDERS)) {
+    const box = $(`api-key-${provider}`);
+    // Keep a typed-but-unsaved key when re-rendering.
+    const draft = box.querySelector("input")?.value ?? "";
+    box.replaceChildren(...renderApiKey(provider, settings.api_keys[provider], draft));
+  }
   renderShortcut(settings);
   renderTranscription(settings.transcription);
 }
@@ -120,7 +133,8 @@ async function recordShortcut() {
   }
 }
 
-function renderApiKey(status, draft) {
+function renderApiKey(provider, status, draft) {
+  const { name, description } = PROVIDERS[provider];
   const input = el("input", {
     type: "password",
     placeholder: status.hint ? `Current key ${status.hint}` : "Paste API key",
@@ -136,16 +150,16 @@ function renderApiKey(status, draft) {
 
   save.addEventListener("click", () =>
     run(save, async () => {
-      const settings = await invoke("set_api_key", { key: input.value });
+      const settings = await invoke("set_api_key", { provider, key: input.value });
       input.value = "";
-      toast("ElevenLabs key saved");
+      toast(`${name} key saved`);
       update(settings);
     }),
   );
 
   const test = el("button", { className: "secondary", type: "button", disabled: !status.saved }, "Test");
   test.addEventListener("click", () =>
-    run(test, async () => toast(await invoke("test_api_key"), { duration: 4000 }), "Testing…"),
+    run(test, async () => toast(await invoke("test_api_key", { provider }), { duration: 4000 }), "Testing…"),
   );
 
   const remove = status.saved
@@ -153,8 +167,8 @@ function renderApiKey(status, draft) {
     : null;
   remove?.addEventListener("click", () =>
     run(remove, async () => {
-      update(await invoke("remove_api_key"));
-      toast("ElevenLabs key removed");
+      update(await invoke("remove_api_key", { provider }));
+      toast(`${name} key removed`);
     }),
   );
 
@@ -163,14 +177,10 @@ function renderApiKey(status, draft) {
     el(
       "div",
       { className: "api-key-head" },
-      el("span", { className: "api-key-name" }, "ElevenLabs"),
+      el("span", { className: "api-key-name" }, name),
       el("span", { className: `badge ${badgeKind}` }, badgeText),
     ),
-    el(
-      "p",
-      { className: "api-key-description" },
-      "Turns your speech into text. Your key stays in your Mac's Keychain.",
-    ),
+    el("p", { className: "api-key-description" }, description),
     el("div", { className: "api-key-form" }, input, save, test, remove),
   ];
 }

@@ -6,6 +6,8 @@ import {
   invoke,
   formatDuration,
   copyText,
+  cardBlocks,
+  cardText,
   toast,
   shortcutKeys,
   shortcutVerb,
@@ -47,7 +49,7 @@ function dayLabel(timestamp) {
 function render() {
   const query = $("history-search").value.trim().toLowerCase();
   const visible = query
-    ? entries.filter((entry) => entry.text.toLowerCase().includes(query))
+    ? entries.filter((entry) => searchText(entry).includes(query))
     : entries;
 
   const nodes = [];
@@ -64,6 +66,11 @@ function render() {
   $("history-list").replaceChildren(...nodes);
   $("history-empty").hidden = visible.length > 0;
   $("history-empty-text").replaceChildren(...emptyText(query));
+}
+
+function searchText(entry) {
+  const results = entry.plugin_results.map((result) => cardText(result.card));
+  return [entry.text, ...results].join("\n").toLowerCase();
 }
 
 function emptyText(query) {
@@ -108,6 +115,16 @@ function renderEntry(entry) {
       ),
     ),
     el("div", { className: "entry-text" }, entry.text),
+    ...entry.plugin_results.map(renderResult),
+  );
+}
+
+function renderResult(result) {
+  return el(
+    "div",
+    { className: `entry-plugin ${result.card?.tone ?? ""}` },
+    el("div", { className: "entry-plugin-name" }, result.plugin_name),
+    ...cardBlocks(result.card),
   );
 }
 

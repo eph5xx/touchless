@@ -2,9 +2,13 @@ mod db;
 mod elevenlabs;
 mod hotkey;
 mod microphone;
+mod openai;
 mod overlay;
 mod paste;
 mod permissions;
+mod plugin_api;
+mod plugin_host;
+mod plugins;
 mod recorder;
 mod settings;
 mod shortcut;
@@ -16,8 +20,9 @@ use db::{Db, Transcript};
 use hotkey::Hotkey;
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
+use plugin_host::{PluginHost, PluginView};
 use recorder::{Recorder, Snapshot};
-use settings::{Preferences, Settings, SettingsView, TranscriptionOptions};
+use settings::{Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
 use shortcut::Shortcut;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
@@ -47,24 +52,54 @@ fn get_settings(settings: State<'_, Settings>) -> SettingsView {
 }
 
 #[tauri::command]
-fn set_api_key(settings: State<'_, Settings>, key: String) -> Result<SettingsView, String> {
-    settings.set_api_key(&key)?;
+fn set_api_key(
+    app: AppHandle,
+    settings: State<'_, Settings>,
+    provider: Provider,
+    key: String,
+) -> Result<SettingsView, String> {
+    settings.set_api_key(provider, &key)?;
+    let _ = app.emit("plugins-changed", ());
     Ok(settings.view())
 }
 
 #[tauri::command]
-fn remove_api_key(settings: State<'_, Settings>) -> Result<SettingsView, String> {
-    settings.remove_api_key()?;
+fn remove_api_key(
+    app: AppHandle,
+    settings: State<'_, Settings>,
+    provider: Provider,
+) -> Result<SettingsView, String> {
+    settings.remove_api_key(provider)?;
+    let _ = app.emit("plugins-changed", ());
     Ok(settings.view())
 }
 
 #[tauri::command]
-async fn test_api_key(settings: State<'_, Settings>) -> Result<String, String> {
+async fn test_api_key(settings: State<'_, Settings>, provider: Provider) -> Result<String, String> {
     let key = settings
-        .api_key()
+        .api_key(provider)
         .ok_or_else(|| "Add a key first".to_owned())?;
-    let options = settings.transcription();
-    settings::test_api_key(&key, &options).await
+    match provider {
+        Provider::ElevenLabs => settings::test_api_key(&key, &settings.transcription()).await,
+        Provider::OpenAi => openai::OpenAi::new(key)?.verify().await,
+    }
+}
+
+#[tauri::command]
+fn list_plugins(host: State<'_, PluginHost>, settings: State<'_, Settings>) -> Vec<PluginView> {
+    host.view(&plugin_host::available(&settings))
+}
+
+#[tauri::command]
+fn set_plugin_enabled(
+    db: State<'_, Db>,
+    host: State<'_, PluginHost>,
+    settings: State<'_, Settings>,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<PluginView>, String> {
+    host.set_enabled(&db, &id, enabled)?;
+    Ok(host.view(&plugin_host::available(&settings)))
 }
 
 #[tauri::command]
@@ -187,6 +222,8 @@ fn main() {
             set_api_key,
             remove_api_key,
             test_api_key,
+            list_plugins,
+            set_plugin_enabled,
             update_transcription,
             update_preferences,
             capture_shortcut,
@@ -204,6 +241,7 @@ fn main() {
             let settings = Settings::load(&db);
             let shortcut = settings.shortcut();
             app.manage(settings);
+            app.manage(PluginHost::load(&db, plugins::all()));
             app.manage(db);
 
             let overlay = Overlay::new(app.handle());
