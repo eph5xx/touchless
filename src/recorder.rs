@@ -88,13 +88,29 @@ impl Segments {
         }
     }
 
+    /// Pieces join with a space, or with a blank line when either side is
+    /// multi-line, so paragraphs and lists from a rewrite stay apart.
     fn text(&self) -> String {
-        self.0
+        let mut joined = String::new();
+        let mut previous_multiline = false;
+        for text in self
+            .0
             .iter()
             .map(|segment| segment.edited.as_deref().unwrap_or(&segment.raw))
             .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+        {
+            let multiline = text.contains('\n');
+            if !joined.is_empty() {
+                joined.push_str(if multiline || previous_multiline {
+                    "\n\n"
+                } else {
+                    " "
+                });
+            }
+            joined.push_str(text);
+            previous_multiline = multiline;
+        }
+        joined
     }
 }
 
@@ -429,6 +445,17 @@ mod tests {
         assert_eq!(segments.text(), "One. Two. one");
         segments.edit("one", "One!");
         assert_eq!(segments.text(), "One. Two. One!");
+    }
+
+    #[test]
+    fn keeps_multi_line_pieces_apart() {
+        let mut segments = Segments::default();
+        segments.commit("intro");
+        segments.commit("list");
+        segments.commit("outro");
+        segments.commit("end");
+        segments.edit("list", "- one\n- two");
+        assert_eq!(segments.text(), "intro\n\n- one\n- two\n\noutro end");
     }
 
     #[test]

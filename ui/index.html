@@ -163,11 +163,19 @@
             </div>
           </div>
           <div class="row column">
-            <div>
-              <div class="row-title">Rewrite instruction</div>
-              <div class="row-subtitle">How to clean up your text. Leave empty to skip. Costs 30% more.</div>
+            <div class="row-head">
+              <div>
+                <div class="row-title">Rewrite</div>
+                <div id="rewrite-hint" class="row-subtitle"></div>
+              </div>
+              <select id="rewrite">
+                <option value="off">Off</option>
+                <option value="enhance">Enhance</option>
+                <option value="structure">Structure</option>
+                <option value="custom">Custom</option>
+              </select>
             </div>
-            <textarea id="transcript-edit" rows="3" maxlength="2000" placeholder="Fix grammar and punctuation. Keep my wording."></textarea>
+            <textarea id="transcript-edit" rows="3" maxlength="2000" placeholder="Fix grammar and punctuation. Keep my wording." hidden></textarea>
           </div>
         </div>
 
