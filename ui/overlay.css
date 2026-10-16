@@ -13,8 +13,10 @@ body {
 
 body {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 0 12px 10px;
   box-sizing: border-box;
 }
@@ -193,4 +195,121 @@ svg {
   80% {
     transform: translateX(6px);
   }
+}
+
+/* Plugin cards above the pill */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 440px;
+}
+
+.cards:empty {
+  display: none;
+}
+
+.card {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px 16px 13px;
+  border-radius: 16px;
+  background: rgba(7, 10, 20, 0.9);
+  border: 1px solid rgba(179, 228, 254, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(179, 228, 254, 0.08);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  color: #eaf4ff;
+  line-height: 1.45;
+  animation: appear 0.18s ease-out;
+}
+
+.card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(234, 244, 255, 0.55);
+}
+
+.card .spinner {
+  display: none;
+  width: 10px;
+  height: 10px;
+}
+
+/* One-line cards: still checking, or nothing to fix. */
+.card.pending,
+.card.success {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  padding: 10px 16px;
+}
+
+.card.pending header,
+.card.success header {
+  margin: 0;
+}
+
+.card.pending .spinner {
+  display: block;
+}
+
+.block-change {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.block-change del {
+  color: #ff8f9c;
+  text-decoration-thickness: 1.5px;
+}
+
+.block-change ins {
+  color: #7ee2a8;
+  text-decoration: none;
+}
+
+.block-arrow {
+  margin: 0 6px;
+  color: rgba(234, 244, 255, 0.45);
+}
+
+.block-text {
+  font-size: 13px;
+  color: rgba(234, 244, 255, 0.85);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.block-change + .block-text {
+  margin-top: 4px;
+}
+
+.card.pending .block-text {
+  color: rgba(234, 244, 255, 0.55);
+}
+
+.card.success .block-text {
+  color: #7ee2a8;
+  font-weight: 600;
+}
+
+.card.failed .block-text {
+  color: #ffb3bd;
+}
+
+/* With the pop-up off, only plugin cards show. */
+[data-style="off"] .pill {
+  display: none;
 }

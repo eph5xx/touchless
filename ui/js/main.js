@@ -7,9 +7,10 @@ import {
   onToggleIgnored,
 } from "./dictate.js";
 import { initHistory, loadHistory } from "./history.js";
+import { loadPlugins } from "./plugins.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
 
-const PAGES = ["dictate", "history", "settings"];
+const PAGES = ["dictate", "history", "plugins", "settings"];
 const DELIVERY_MESSAGES = {
   pasted: "Pasted into the active app",
   copied: "Copied to clipboard",
@@ -31,6 +32,7 @@ function showPage(page) {
     link.classList.toggle("active", link.dataset.page === page);
   }
   if (page === "history") loadHistory();
+  if (page === "plugins") loadPlugins();
   if (page === "settings") refreshPermissions();
 }
 
@@ -64,6 +66,9 @@ await listen("navigate", ({ payload }) => {
 });
 await listen("transcripts-changed", () => {
   if (currentPage() === "history") loadHistory();
+});
+await listen("plugins-changed", () => {
+  if (currentPage() === "plugins") loadPlugins();
 });
 await listen("dictation-finished", ({ payload }) => {
   if (payload.delivery && document.hasFocus()) toast(DELIVERY_MESSAGES[payload.delivery]);

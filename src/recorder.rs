@@ -15,7 +15,9 @@ use crate::{
     microphone::Microphone,
     overlay::Overlay,
     paste::{self, Delivery},
-    settings::{OverlayStyle, Settings},
+    plugin_api::{Dictation, Plugin},
+    plugin_host::{self, PluginHost},
+    settings::{OverlayStyle, Provider, Settings, TranscriptionOptions},
     tray,
 };
 
@@ -50,6 +52,7 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Serialize)]
 struct Finished {
     text: String,
+    transcript_id: Option<i64>,
     delivery: Option<Delivery>,
     error: Option<String>,
 }
@@ -98,6 +101,10 @@ impl Segments {
 struct Inner {
     snapshot: Snapshot,
     segments: Segments,
+    /// Languages ElevenLabs detected for the committed pieces.
+    languages: Vec<String>,
+    /// From the overlay's `show` for this dictation; `None` when the pop-up is off.
+    overlay_token: Option<u64>,
     stop: Option<std_mpsc::Sender<()>>,
 }
 
@@ -122,6 +129,8 @@ impl Recorder {
                     hotkey: HotkeyStatus::Unavailable,
                 },
                 segments: Segments::default(),
+                languages: Vec::new(),
+                overlay_token: None,
                 stop: None,
             }),
         }
@@ -142,6 +151,7 @@ impl Recorder {
                 let (stop_tx, stop_rx) = std_mpsc::channel();
                 inner.stop = Some(stop_tx);
                 inner.segments = Segments::default();
+                inner.languages.clear();
                 let snapshot = &mut inner.snapshot;
                 snapshot.status = Status::Connecting;
                 snapshot.started_at = Some(now_ms());
@@ -152,9 +162,15 @@ impl Recorder {
                 drop(inner);
                 self.emit(&snapshot);
 
-                if self.app.state::<Settings>().preferences().overlay != OverlayStyle::Off {
-                    self.overlay.show();
-                }
+                let token =
+                    if self.app.state::<Settings>().preferences().overlay != OverlayStyle::Off {
+                        Some(self.overlay.show())
+                    } else {
+                        // A plugin card from the previous dictation may still be up.
+                        self.overlay.hide();
+                        None
+                    };
+                self.inner.lock().unwrap().overlay_token = token;
 
                 let recorder = Arc::clone(self);
                 tauri::async_runtime::spawn(async move { recorder.session(stop_rx).await });
@@ -178,22 +194,26 @@ impl Recorder {
     async fn session(self: Arc<Self>, stop: std_mpsc::Receiver<()>) {
         let result = self.record(stop).await;
 
-        let (text, started_at) = {
+        let (text, started_at, languages, overlay_token) = {
             let mut inner = self.inner.lock().unwrap();
             // Dropping the sender also stops the microphone thread on error paths.
             inner.stop = None;
             (
                 inner.snapshot.committed.trim().to_owned(),
                 inner.snapshot.started_at.unwrap_or_else(now_ms),
+                std::mem::take(&mut inner.languages),
+                inner.overlay_token,
             )
         };
 
         let mut error = result.err().map(|error| error.to_string());
         let mut delivery = None;
+        let mut transcript_id = None;
         if !text.is_empty() {
             let db = self.app.state::<Db>();
             match db.insert(&text, started_at, now_ms() - started_at) {
-                Ok(_) => {
+                Ok(transcript) => {
+                    transcript_id = Some(transcript.id);
                     let _ = self.app.emit("transcripts-changed", ());
                 }
                 Err(db_error) => error = Some(format!("could not save transcript: {db_error}")),
@@ -217,6 +237,7 @@ impl Recorder {
             "dictation-finished",
             Finished {
                 text: text.clone(),
+                transcript_id,
                 delivery,
                 error: error.clone(),
             },
@@ -232,13 +253,47 @@ impl Recorder {
             snapshot.partial.clear();
             snapshot.error = error;
         });
-        self.overlay.hide_after(hide_delay);
+
+        // Plugins run after the paste, while the user is free to dictate again.
+        match transcript_id.and_then(|id| self.plugins_for(id, &text, &languages)) {
+            None => {
+                if let Some(token) = overlay_token {
+                    self.overlay.hide_after(token, hide_delay);
+                }
+            }
+            Some((plugins, dictation)) => {
+                // Plugin cards show even when the pop-up is off.
+                let token = overlay_token.unwrap_or_else(|| self.overlay.show());
+                let finished = plugin_host::run(&self.app, plugins, dictation).await;
+                self.overlay
+                    .hide_after(token, plugin_host::display_time(&finished));
+            }
+        }
+    }
+
+    fn plugins_for(
+        &self,
+        transcript_id: i64,
+        text: &str,
+        languages: &[String],
+    ) -> Option<(Vec<Arc<dyn Plugin>>, Dictation)> {
+        let settings = self.app.state::<Settings>();
+        let dictation = Dictation {
+            transcript_id,
+            text: text.to_owned(),
+            language: dictation_language(languages, &settings.transcription()),
+        };
+        let plugins = self
+            .app
+            .state::<PluginHost>()
+            .applicable(&plugin_host::available(&settings), &dictation);
+        (!plugins.is_empty()).then_some((plugins, dictation))
     }
 
     async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
         let settings = self.app.state::<Settings>();
         let api_key = settings
-            .api_key()
+            .api_key(Provider::ElevenLabs)
             .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
         let options = settings.transcription();
 
@@ -283,6 +338,10 @@ impl Recorder {
     fn apply(&self, event: TranscriptEvent) {
         let snapshot = {
             let mut inner = self.inner.lock().unwrap();
+            if let TranscriptEvent::Language(code) = event {
+                inner.languages.push(code.to_ascii_lowercase());
+                return;
+            }
             let Inner {
                 snapshot, segments, ..
             } = &mut *inner;
@@ -297,6 +356,7 @@ impl Recorder {
                     segments.edit(&original, &edited);
                     snapshot.committed = segments.text();
                 }
+                TranscriptEvent::Language(_) => {}
             }
             snapshot.clone()
         };
@@ -315,6 +375,26 @@ impl Recorder {
     fn emit(&self, snapshot: &Snapshot) {
         let _ = self.app.emit("recorder-state", snapshot);
         tray::set_recording(&self.app, snapshot.status != Status::Idle);
+    }
+}
+
+/// The language heard most often. Without detection, the main language counts
+/// only when it is the only one the user speaks.
+fn dictation_language(detected: &[String], options: &TranscriptionOptions) -> Option<String> {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for code in detected {
+        match counts.iter_mut().find(|(seen, _)| *seen == code) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((code, 1)),
+        }
+    }
+    if let Some((code, _)) = counts.iter().max_by_key(|(_, count)| *count) {
+        return Some((*code).to_owned());
+    }
+    if options.secondary_languages.is_empty() {
+        options.language_code.clone()
+    } else {
+        None
     }
 }
 
@@ -349,6 +429,36 @@ mod tests {
         assert_eq!(segments.text(), "One. Two. one");
         segments.edit("one", "One!");
         assert_eq!(segments.text(), "One. Two. One!");
+    }
+
+    #[test]
+    fn picks_the_dictation_language() {
+        let codes = |codes: &[&str]| {
+            codes
+                .iter()
+                .map(|code| code.to_string())
+                .collect::<Vec<_>>()
+        };
+        let options = |main: Option<&str>, others: &[&str]| TranscriptionOptions {
+            language_code: main.map(Into::into),
+            secondary_languages: codes(others),
+            ..Default::default()
+        };
+
+        let detected = codes(&["eng", "rus", "eng"]);
+        assert_eq!(
+            dictation_language(&detected, &options(Some("rus"), &[])).as_deref(),
+            Some("eng")
+        );
+        assert_eq!(
+            dictation_language(&[], &options(Some("eng"), &[])).as_deref(),
+            Some("eng")
+        );
+        assert_eq!(
+            dictation_language(&[], &options(Some("eng"), &["rus"])),
+            None
+        );
+        assert_eq!(dictation_language(&[], &options(None, &[])), None);
     }
 
     #[test]

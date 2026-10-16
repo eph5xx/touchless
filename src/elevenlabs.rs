@@ -34,6 +34,8 @@ pub enum TranscriptEvent {
         original: String,
         edited: String,
     },
+    /// Language detected for a committed piece; arrives shortly after the commit.
+    Language(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,6 +44,7 @@ enum ServerMessage {
     Partial(String),
     Committed(String),
     Edited { text: String, edited: String },
+    Language(String),
     Error(String),
     Other,
 }
@@ -64,6 +67,7 @@ fn parse_server_message(text: &str) -> ServerMessage {
             text: field("text"),
             edited: field("edited_text"),
         },
+        "committed_transcript_with_timestamps" => ServerMessage::Language(field("language_code")),
         _ => match value["error"].as_str() {
             Some(error) => ServerMessage::Error(format!("{message_type}: {error}")),
             None => ServerMessage::Other,
@@ -78,7 +82,8 @@ fn realtime_url(base_url: &str, sample_rate: u32, options: &TranscriptionOptions
         query
             .append_pair("model_id", "scribe_v2_realtime")
             .append_pair("audio_format", &format!("pcm_{sample_rate}"))
-            .append_pair("commit_strategy", "vad");
+            .append_pair("commit_strategy", "vad")
+            .append_pair("include_language_detection", "true");
         if let Some(code) = &options.language_code {
             query.append_pair("language_code", code);
         }
@@ -311,8 +316,13 @@ impl ElevenLabs {
                     edited: edited.clone(),
                 });
             }
+            ServerMessage::Language(code) if !code.trim().is_empty() => {
+                on_event(TranscriptEvent::Language(code.trim().to_owned()));
+            }
             ServerMessage::Error(error) => return Err(io::Error::other(error.clone()).into()),
-            ServerMessage::SessionStarted(_) | ServerMessage::Other => {}
+            ServerMessage::SessionStarted(_)
+            | ServerMessage::Language(_)
+            | ServerMessage::Other => {}
         }
         Ok(message)
     }
@@ -372,11 +382,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_detected_language() {
+        assert_eq!(
+            parse_server_message(
+                r#"{"message_type":"committed_transcript_with_timestamps","text":"hi","language_code":"eng","words":[]}"#
+            ),
+            ServerMessage::Language("eng".into())
+        );
+    }
+
+    #[test]
     fn builds_url_with_default_options() {
         let url = realtime_url(REALTIME_URL, 48_000, &TranscriptionOptions::default()).unwrap();
         assert_eq!(
             url.as_str(),
-            "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_48000&commit_strategy=vad"
+            "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_48000&commit_strategy=vad&include_language_detection=true"
         );
     }
 
@@ -395,6 +415,7 @@ mod tests {
             ("model_id", "scribe_v2_realtime"),
             ("audio_format", "pcm_16000"),
             ("commit_strategy", "vad"),
+            ("include_language_detection", "true"),
             ("language_code", "eng"),
             ("secondary_languages", "rus"),
             ("secondary_languages", "ukr"),

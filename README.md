@@ -12,6 +12,7 @@ Tap <kbd>⌥</kbd><kbd>⌘</kbd>, speak, tap again. Your words appear wherever y
 - **Any language**: auto-detected, or pick your own.
 - **Clean text**: drops the "um"s, and learns your names and jargon.
 - **Nothing lost**: every dictation is saved to history.
+- **Plugins**: turn on English Teacher to get one grammar tip after each English dictation (needs an [OpenAI](https://platform.openai.com) key).
 
 ## Install
 

@@ -13,7 +13,9 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 const LABEL: &str = "overlay";
 const WIDTH: f64 = 520.0;
-const HEIGHT: f64 = 132.0;
+/// Tall enough for a plugin card above the pill. The window is transparent and
+/// ignores the mouse, so the empty part never gets in the way.
+const HEIGHT: f64 = 340.0;
 const BOTTOM_MARGIN: f64 = 24.0;
 
 pub struct Overlay {
@@ -37,8 +39,9 @@ impl Overlay {
         }
     }
 
-    pub fn show(&self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
+    /// Returns a token for [`Self::hide_after`].
+    pub fn show(&self) -> u64 {
+        let token = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let app = self.app.clone();
         let _ = self.app.run_on_main_thread(move || {
             let Some(window) = app.get_webview_window(LABEL) else {
@@ -47,11 +50,25 @@ impl Overlay {
             place_near_cursor(&app, &window);
             order_front(&window);
         });
+        token
     }
 
-    pub fn hide_after(&self, delay: Duration) {
+    /// Hides now and cancels pending hides.
+    pub fn hide(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let app = self.app.clone();
+        let _ = self.app.run_on_main_thread(move || {
+            if let Some(window) = app.get_webview_window(LABEL) {
+                order_out(&window);
+            }
+        });
+    }
+
+    /// Hides after `delay`, unless the overlay was shown or hidden again since the
+    /// `show` that returned `token`.
+    pub fn hide_after(&self, token: u64, delay: Duration) {
         let generation = Arc::clone(&self.generation);
-        let expected = generation.load(Ordering::SeqCst);
+        let expected = token;
         let app = self.app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(delay);

@@ -1,4 +1,4 @@
-import { $, invoke, listen, formatDuration, shake } from "./util.js";
+import { $, el, invoke, listen, formatDuration, shake, cardBlocks } from "./util.js";
 
 const DELIVERY_LABELS = {
   pasted: "Pasted",
@@ -10,6 +10,8 @@ let state = null;
 let finished = null;
 let stoppedAt = null;
 let timerHandle = null;
+/** Plugin cards for the finished dictation, by plugin id. */
+const cards = new Map();
 
 const minimal = () => document.body.dataset.style === "minimal";
 
@@ -67,8 +69,38 @@ function renderContent() {
         : "";
 }
 
+function renderCards() {
+  $("cards").replaceChildren(...[...cards.values()].map(renderCard));
+}
+
+function renderCard(entry) {
+  const [tone, body] = entry.pending
+    ? ["pending", [el("div", { className: "block-text" }, "Checking…")]]
+    : entry.error
+      ? ["failed", [el("div", { className: "block-text" }, `Couldn't check this one: ${entry.error}`)]]
+      : [entry.card.tone, cardBlocks(entry.card)];
+  return el(
+    "section",
+    { className: `card ${tone}` },
+    el("header", {}, el("span", { className: "spinner" }), entry.name),
+    ...body,
+  );
+}
+
+/** Applies a plugin event if it belongs to the dictation on screen. */
+function onPlugin(payload, entry) {
+  if (finished?.transcript_id == null || finished.transcript_id !== payload.transcript_id) return;
+  if (entry) cards.set(payload.plugin_id, { name: payload.plugin_name, ...entry });
+  else cards.delete(payload.plugin_id);
+  renderCards();
+}
+
 function onState(next) {
-  if (next.status === "connecting" && state?.status !== "connecting") finished = null;
+  if (next.status === "connecting" && state?.status !== "connecting") {
+    finished = null;
+    cards.clear();
+    renderCards();
+  }
   if (next.status === "finalizing" && state?.status !== "finalizing") stoppedAt = Date.now();
   if (next.status === "connecting") stoppedAt = null;
   state = next;
@@ -86,6 +118,12 @@ await listen("recorder-state", ({ payload }) => onState(payload));
 await listen("dictation-finished", ({ payload }) => {
   finished = payload;
   render();
+});
+await listen("plugin-started", ({ payload }) => onPlugin(payload, { pending: true }));
+await listen("plugin-finished", ({ payload }) => {
+  const { card, error } = payload;
+  // A plugin with nothing to say (e.g. not English) just disappears.
+  onPlugin(payload, card || error ? { card, error } : null);
 });
 await listen("toggle-ignored", () => shake($("pill")));
 await listen("preferences-changed", ({ payload }) => setStyle(payload));

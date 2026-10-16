@@ -104,6 +104,28 @@ export function shortcutVerb(shortcut) {
   return shortcut.kind === "tap" ? "Tap" : "Press";
 }
 
+/** Renders the blocks of a plugin card (see `plugin_api::Block`). */
+export function cardBlocks(card) {
+  return (card?.blocks ?? []).map((block) =>
+    block.kind === "change"
+      ? el(
+          "div",
+          { className: "block-change" },
+          el("del", {}, block.before),
+          el("span", { className: "block-arrow" }, "→"),
+          el("ins", {}, block.after),
+        )
+      : el("div", { className: "block-text" }, block.text),
+  );
+}
+
+/** All text in a plugin card, for search. */
+export function cardText(card) {
+  return (card?.blocks ?? [])
+    .flatMap((block) => (block.kind === "change" ? [block.before, block.after] : [block.text]))
+    .join(" ");
+}
+
 export function formatDuration(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const minutes = String(Math.floor(total / 60)).padStart(2, "0");

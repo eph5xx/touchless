@@ -890,6 +890,96 @@ textarea {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* Plugins */
+
+.plugin {
+  padding: 16px 18px;
+}
+
+.plugin-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.plugin-text {
+  flex: 1;
+}
+
+.plugin-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.plugin-description {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.plugin-needs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Plugin results under a History entry */
+
+.entry-plugin {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  line-height: 1.5;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.entry-plugin-name {
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.entry-plugin.success {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--success-soft);
+}
+
+.entry-plugin.success .entry-plugin-name {
+  margin: 0;
+}
+
+.entry-plugin.success .block-text {
+  color: var(--success);
+  font-weight: 500;
+}
+
+.block-change {
+  font-weight: 500;
+}
+
+.block-change del {
+  color: var(--danger);
+  text-decoration-thickness: 1.5px;
+}
+
+.block-change ins {
+  color: var(--success);
+  text-decoration: none;
+}
+
+.block-arrow {
+  margin: 0 6px;
+  color: var(--muted);
+}
 /* Toasts */
 
 .toasts {

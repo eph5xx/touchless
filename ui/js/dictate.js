@@ -130,7 +130,7 @@ export function renderCallouts({ recorder, settings, permissions }) {
 
   if (recorder?.error) callouts.push(callout("error", recorder.error));
 
-  if (settings && !settings.api_key.saved) {
+  if (settings && !settings.api_keys.elevenlabs.saved) {
     callouts.push(
       callout("info", "Add your ElevenLabs API key to start dictating.", [
         ["Open Settings", () => (location.hash = "#settings")],
