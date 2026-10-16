@@ -169,13 +169,17 @@
             </div>
             <input type="checkbox" class="switch" data-preference="restore_clipboard" />
           </label>
-          <label class="row">
+          <div class="row">
             <div>
-              <div class="row-title">Show live preview</div>
-              <div class="row-subtitle">Shows your words at the bottom of the screen as you talk.</div>
+              <div class="row-title">Pop-up while dictating</div>
+              <div class="row-subtitle">Shows at the bottom of the screen. The menu bar icon always shows when you're recording.</div>
             </div>
-            <input type="checkbox" class="switch" data-preference="show_overlay" />
-          </label>
+            <select data-preference="overlay">
+              <option value="big">Big (live text)</option>
+              <option value="minimal">Minimal</option>
+              <option value="off">No pop-up</option>
+            </select>
+          </div>
         </div>
 
         <h2 class="section-title">Permissions</h2>

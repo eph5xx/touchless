@@ -10,12 +10,25 @@ const SHORTCUT_KEY: &str = "shortcut";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
+/// How the pop-up looks while dictating.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayStyle {
+    /// Shows the live transcript.
+    #[default]
+    Big,
+    /// Shows only the status and the timer.
+    Minimal,
+    /// No pop-up; only the menu bar icon changes.
+    Off,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "StoredPreferences")]
 pub struct Preferences {
     pub auto_paste: bool,
     pub restore_clipboard: bool,
-    pub show_overlay: bool,
+    pub overlay: OverlayStyle,
 }
 
 impl Default for Preferences {
@@ -23,7 +36,43 @@ impl Default for Preferences {
         Self {
             auto_paste: true,
             restore_clipboard: true,
-            show_overlay: true,
+            overlay: OverlayStyle::default(),
+        }
+    }
+}
+
+/// Saved preferences, including the `show_overlay` switch that `overlay` replaced.
+#[derive(Deserialize)]
+#[serde(default)]
+struct StoredPreferences {
+    auto_paste: bool,
+    restore_clipboard: bool,
+    overlay: Option<OverlayStyle>,
+    show_overlay: Option<bool>,
+}
+
+impl Default for StoredPreferences {
+    fn default() -> Self {
+        let defaults = Preferences::default();
+        Self {
+            auto_paste: defaults.auto_paste,
+            restore_clipboard: defaults.restore_clipboard,
+            overlay: None,
+            show_overlay: None,
+        }
+    }
+}
+
+impl From<StoredPreferences> for Preferences {
+    fn from(stored: StoredPreferences) -> Self {
+        let overlay = stored.overlay.unwrap_or(match stored.show_overlay {
+            Some(false) => OverlayStyle::Off,
+            _ => OverlayStyle::default(),
+        });
+        Self {
+            auto_paste: stored.auto_paste,
+            restore_clipboard: stored.restore_clipboard,
+            overlay,
         }
     }
 }
@@ -335,7 +384,30 @@ mod tests {
         let preferences: Preferences = serde_json::from_str(r#"{"auto_paste":false}"#).unwrap();
         assert!(!preferences.auto_paste);
         assert!(preferences.restore_clipboard);
-        assert!(preferences.show_overlay);
+        assert_eq!(preferences.overlay, OverlayStyle::Big);
+    }
+
+    #[test]
+    fn migrates_legacy_show_overlay() {
+        let off: Preferences = serde_json::from_str(r#"{"show_overlay":false}"#).unwrap();
+        assert_eq!(off.overlay, OverlayStyle::Off);
+        let on: Preferences = serde_json::from_str(r#"{"show_overlay":true}"#).unwrap();
+        assert_eq!(on.overlay, OverlayStyle::Big);
+        let explicit: Preferences =
+            serde_json::from_str(r#"{"show_overlay":false,"overlay":"minimal"}"#).unwrap();
+        assert_eq!(explicit.overlay, OverlayStyle::Minimal);
+    }
+
+    #[test]
+    fn round_trips_preferences() {
+        let preferences = Preferences {
+            auto_paste: false,
+            restore_clipboard: true,
+            overlay: OverlayStyle::Minimal,
+        };
+        let json = serde_json::to_string(&preferences).unwrap();
+        assert!(json.contains(r#""overlay":"minimal""#));
+        assert_eq!(serde_json::from_str::<Preferences>(&json).unwrap(), preferences);
     }
 
     #[test]

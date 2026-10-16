@@ -11,8 +11,16 @@ let finished = null;
 let stoppedAt = null;
 let timerHandle = null;
 
+const minimal = () => document.body.dataset.style === "minimal";
+
+function setStyle(preferences) {
+  document.body.dataset.style = preferences.overlay;
+  render();
+}
+
 function render() {
   renderContent();
+  if (minimal()) return;
   // Right-align overflowing text so the newest words stay visible.
   const textBox = $("pill").querySelector(".text");
   textBox.classList.add("short");
@@ -28,7 +36,11 @@ function renderContent() {
     $("committed").textContent = finished.error ?? (finished.text || "Nothing heard");
     $("committed").className = finished.text || finished.error ? "" : "placeholder";
     $("partial").textContent = "";
-    $("meta").textContent = finished.error ? "" : (DELIVERY_LABELS[finished.delivery] ?? "");
+    const delivery = DELIVERY_LABELS[finished.delivery] ?? "";
+    if (!minimal()) $("meta").textContent = finished.error ? "" : delivery;
+    else if (kind === "failed") $("meta").textContent = "Failed";
+    else if (kind === "empty") $("meta").textContent = "Nothing heard";
+    else $("meta").textContent = delivery || "Done";
     return;
   }
 
@@ -76,5 +88,7 @@ await listen("dictation-finished", ({ payload }) => {
   render();
 });
 await listen("toggle-ignored", () => shake($("pill")));
+await listen("preferences-changed", ({ payload }) => setStyle(payload));
 
+setStyle((await invoke("get_settings")).preferences);
 onState(await invoke("get_state"));

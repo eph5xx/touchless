@@ -1,42 +1,34 @@
-# Touchless
+<p align="center">
+  <img src="icons/128x128@2x.png" width="128" alt="Touchless">
+</p>
 
-Voice-to-text for macOS. Tap <kbd>⌥</kbd><kbd>⌘</kbd>, talk, tap again: the text is transcribed by
-[ElevenLabs](https://elevenlabs.io) Scribe, saved to history and pasted where your cursor is. You
-can change the shortcut in **Settings**.
+<h1 align="center">Touchless</h1>
+
+<p align="center"><b>Talk instead of type. Anywhere on your Mac.</b></p>
+
+Tap <kbd>⌥</kbd><kbd>⌘</kbd>, speak, tap again. Your words appear wherever your cursor is.
+
+- **Fast and accurate**: real-time transcription by ElevenLabs Scribe.
+- **Any language**: auto-detected, or pick your own.
+- **Clean text**: drops the "um"s, and learns your names and jargon.
+- **Nothing lost**: every dictation is saved to history.
 
 ## Install
 
-You need macOS, [Rust](https://rustup.rs) and the Tauri CLI:
+You need macOS, [Rust](https://rustup.rs) and an [ElevenLabs](https://elevenlabs.io) API key.
 
 ```sh
 cargo install tauri-cli --version '^2' --locked
 ./scripts/install.sh
 ```
 
-The script builds the app, signs it with a local "Touchless Dev" certificate (created on the
-first run; macOS asks for your password once), installs it to `/Applications` and starts it.
+Open **Settings** from the menu bar icon, paste your API key, and allow the permissions macOS asks for.
 
-On first launch:
-
-1. Open **Settings** from the menu bar icon and paste your ElevenLabs API key.
-2. Allow Microphone, Input Monitoring and Accessibility when asked.
-
-## Update
-
-Get the latest code and run the script again:
-
-```sh
-git pull
-./scripts/install.sh
-```
-
-Permissions and your API key carry over between updates.
+To update, run `git pull && ./scripts/install.sh`.
 
 ## Development
 
 ```sh
-cargo tauri dev   # run from source
-cargo test        # run tests
+cargo tauri dev   # run from source (quit the installed app first)
+cargo test
 ```
-
-Quit the installed app while running from source, so the shortcut isn't handled twice.
