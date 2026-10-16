@@ -21,7 +21,7 @@ impl Db {
     }
 
     #[cfg(test)]
-    fn open_in_memory() -> rusqlite::Result<Self> {
+    pub fn open_in_memory() -> rusqlite::Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
 

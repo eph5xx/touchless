@@ -7,15 +7,18 @@ mod paste;
 mod permissions;
 mod recorder;
 mod settings;
+mod shortcut;
 mod tray;
 
 use std::sync::Arc;
 
 use db::{Db, Transcript};
+use hotkey::Hotkey;
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use recorder::{Recorder, Snapshot};
 use settings::{Preferences, Settings, SettingsView, TranscriptionOptions};
+use shortcut::Shortcut;
 use tauri::{AppHandle, Manager, State, WindowEvent};
 
 #[tauri::command]
@@ -84,6 +87,69 @@ fn update_preferences(
     Ok(settings.view())
 }
 
+// The shortcut commands are async so they run off the main thread: registering
+// a combo waits for the main thread, which would deadlock with a sync command.
+#[tauri::command]
+async fn capture_shortcut(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    hotkey: State<'_, Hotkey>,
+    recorder: State<'_, Arc<Recorder>>,
+) -> Result<Option<SettingsView>, String> {
+    match hotkey.capture().await {
+        Ok(Some(shortcut)) => {
+            change_shortcut(&db, &settings, &hotkey, &recorder, shortcut).map(Some)
+        }
+        other => {
+            restore_shortcut(&settings, &hotkey, &recorder);
+            other.map(|_| None)
+        }
+    }
+}
+
+#[tauri::command]
+async fn cancel_shortcut_capture(hotkey: State<'_, Hotkey>) -> Result<(), String> {
+    hotkey.cancel_capture();
+    Ok(())
+}
+
+#[tauri::command]
+async fn reset_shortcut(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    hotkey: State<'_, Hotkey>,
+    recorder: State<'_, Arc<Recorder>>,
+) -> Result<SettingsView, String> {
+    change_shortcut(&db, &settings, &hotkey, &recorder, Shortcut::default())
+}
+
+/// Switches to `shortcut` and saves it; on failure the saved shortcut stays active.
+fn change_shortcut(
+    db: &Db,
+    settings: &Settings,
+    hotkey: &Hotkey,
+    recorder: &Recorder,
+    shortcut: Shortcut,
+) -> Result<SettingsView, String> {
+    let result = shortcut.normalized().and_then(|shortcut| {
+        hotkey.apply(&shortcut)?;
+        settings.set_shortcut(db, shortcut)
+    });
+    if result.is_err() {
+        restore_shortcut(settings, hotkey, recorder);
+    } else {
+        recorder.set_hotkey(hotkey.status());
+    }
+    result.map(|()| settings.view())
+}
+
+fn restore_shortcut(settings: &Settings, hotkey: &Hotkey, recorder: &Recorder) {
+    if let Err(error) = hotkey.apply(&settings.shortcut()) {
+        eprintln!("could not restore the shortcut: {error}");
+    }
+    recorder.set_hotkey(hotkey.status());
+}
+
 #[tauri::command]
 fn get_permissions() -> Permissions {
     permissions::current()
@@ -109,6 +175,7 @@ fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_state,
             toggle_recording,
@@ -120,6 +187,9 @@ fn main() {
             test_api_key,
             update_transcription,
             update_preferences,
+            capture_shortcut,
+            cancel_shortcut_capture,
+            reset_shortcut,
             get_permissions,
             request_accessibility,
             open_privacy_settings,
@@ -129,7 +199,9 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let db = Db::open(&data_dir.join("touchless.db"))?;
-            app.manage(Settings::load(&db));
+            let settings = Settings::load(&db);
+            let shortcut = settings.shortcut();
+            app.manage(settings);
             app.manage(db);
 
             let overlay = Overlay::new(app.handle());
@@ -137,7 +209,9 @@ fn main() {
             app.manage(Arc::clone(&recorder));
 
             let hotkey_recorder = Arc::clone(&recorder);
-            recorder.set_hotkey(hotkey::spawn(move || hotkey_recorder.toggle()));
+            let hotkey = Hotkey::start(app.handle(), shortcut, move || hotkey_recorder.toggle());
+            recorder.set_hotkey(hotkey.status());
+            app.manage(hotkey);
 
             tray::create(app.handle())?;
             Ok(())

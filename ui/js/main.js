@@ -1,5 +1,11 @@
 import { invoke, listen, toast } from "./util.js";
-import { initDictate, renderRecorder, renderCallouts, onToggleIgnored } from "./dictate.js";
+import {
+  initDictate,
+  renderRecorder,
+  renderCallouts,
+  renderShortcut,
+  onToggleIgnored,
+} from "./dictate.js";
 import { initHistory, loadHistory } from "./history.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
 
@@ -34,10 +40,12 @@ async function refreshPermissions() {
   renderCallouts(app);
 }
 
-initDictate();
-initHistory();
+const getShortcut = () => app.settings?.shortcut ?? null;
+initDictate(getShortcut);
+initHistory(getShortcut);
 initSettings((settings) => {
   app.settings = settings;
+  renderShortcut();
   renderCallouts(app);
 });
 

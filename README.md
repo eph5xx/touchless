@@ -1,7 +1,8 @@
 # Touchless
 
-Voice-to-text for macOS. Tap <kbd>⌘</kbd><kbd>⌥</kbd>, talk, tap again: the text is transcribed by
-[ElevenLabs](https://elevenlabs.io) Scribe, saved to history and pasted where your cursor is.
+Voice-to-text for macOS. Tap <kbd>⌥</kbd><kbd>⌘</kbd>, talk, tap again: the text is transcribed by
+[ElevenLabs](https://elevenlabs.io) Scribe, saved to history and pasted where your cursor is. You
+can change the shortcut in **Settings**.
 
 ## Install
 

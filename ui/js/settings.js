@@ -1,16 +1,38 @@
-import { $, el, invoke, toast } from "./util.js";
+import { $, el, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "./util.js";
 import { LANGUAGES, languageName } from "./languages.js";
 
 const MAX_KEYTERMS = 50;
 
 let onChange = () => {};
 let current = null;
+let recordingShortcut = false;
 
 export function initSettings(handleChange) {
   onChange = handleChange;
   for (const input of document.querySelectorAll("[data-preference]")) {
     input.addEventListener("change", savePreferences);
   }
+
+  $("shortcut-change").addEventListener("click", recordShortcut);
+  $("shortcut-reset").addEventListener("click", (event) =>
+    run(event.currentTarget, async () => {
+      update(await invoke("reset_shortcut"));
+      toast("Shortcut reset");
+    }),
+  );
+  // Keys pressed while recording belong to the new shortcut, not to the page.
+  for (const type of ["keydown", "keyup"]) {
+    document.addEventListener(
+      type,
+      (event) => {
+        if (recordingShortcut) event.preventDefault();
+      },
+      true,
+    );
+  }
+  window.addEventListener("blur", () => {
+    if (recordingShortcut) invoke("cancel_shortcut_capture");
+  });
 
   $("language-code").replaceChildren(
     el("option", { value: "" }, "Auto-detect"),
@@ -54,7 +76,46 @@ export function renderSettings(settings) {
   // Keep a typed-but-unsaved key when re-rendering.
   const draft = $("api-key").querySelector("input")?.value ?? "";
   $("api-key").replaceChildren(...renderApiKey(settings.api_key, draft));
+  renderShortcut(settings);
   renderTranscription(settings.transcription);
+}
+
+function renderShortcut(settings) {
+  const keys = $("shortcut-keys");
+  keys.classList.toggle("recording", recordingShortcut);
+  if (recordingShortcut) {
+    keys.replaceChildren("Press your shortcut…");
+    $("shortcut-hint").textContent =
+      "Tap modifier keys like ⌥⌘ or Right ⌥, or press a combination like ⌥Space. Esc cancels.";
+  } else {
+    keys.replaceChildren(...shortcutKeys(settings.shortcut));
+    $("shortcut-hint").textContent =
+      `${shortcutVerb(settings.shortcut)} it in any app to start, and again to stop.`;
+  }
+  $("shortcut-change").textContent = recordingShortcut ? "Cancel" : "Change";
+  $("shortcut-reset").hidden = recordingShortcut || settings.shortcut_is_default;
+}
+
+async function recordShortcut() {
+  if (recordingShortcut) {
+    invoke("cancel_shortcut_capture");
+    return;
+  }
+  recordingShortcut = true;
+  renderShortcut(current);
+  let settings = null;
+  try {
+    settings = await invoke("capture_shortcut");
+  } catch (error) {
+    toast(String(error), { error: true, duration: 4000 });
+  }
+  recordingShortcut = false;
+  if (settings) {
+    update(settings);
+    toast(`Shortcut set to ${shortcutText(settings.shortcut)}`);
+  } else {
+    renderShortcut(current);
+  }
 }
 
 function renderApiKey(status, draft) {
@@ -235,7 +296,7 @@ export function renderPermissions(permissions) {
   $("permissions").replaceChildren(
     row(
       "Input Monitoring",
-      "Lets ⌘⌥ work in any app. Restart after allowing.",
+      "Needed for modifier-key shortcuts and to record a new shortcut. Restart after allowing.",
       permissions.input_monitoring,
       [
         ["Open Settings", () => invoke("open_privacy_settings", { pane: "input_monitoring" })],

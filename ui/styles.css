@@ -159,25 +159,6 @@ nav .dot {
   margin-left: auto;
 }
 
-.sidebar-footer {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.shortcut {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 main {
   flex: 1;
   display: flex;
@@ -893,6 +874,20 @@ textarea {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+.shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.shortcut-keys.recording {
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 500;
+  animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
 /* Toasts */
