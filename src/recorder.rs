@@ -390,7 +390,7 @@ impl Recorder {
 
     fn emit(&self, snapshot: &Snapshot) {
         let _ = self.app.emit("recorder-state", snapshot);
-        tray::set_recording(&self.app, snapshot.status != Status::Idle);
+        tray::set_status(&self.app, snapshot.status);
     }
 }
 
