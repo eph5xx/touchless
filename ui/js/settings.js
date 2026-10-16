@@ -2,6 +2,12 @@ import { $, el, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "
 import { LANGUAGES, languageName } from "./languages.js";
 
 const MAX_KEYTERMS = 50;
+const REWRITE_HINTS = {
+  off: "Pastes your words as transcribed.",
+  enhance: "Fixes grammar and smooths wording, in your voice. Costs 30% more.",
+  structure: "Adds paragraphs and lists when your text needs them. Costs 30% more.",
+  custom: "Tell it how to rewrite your text. Costs 30% more.",
+};
 const PROVIDERS = {
   elevenlabs: {
     name: "ElevenLabs",
@@ -68,6 +74,10 @@ export function initSettings(handleChange) {
     if (await saveTranscription({ keyterms: [...current.transcription.keyterms, input.value] })) {
       input.value = "";
     }
+  });
+  $("rewrite").addEventListener("change", async (event) => {
+    const rewrite = event.target.value;
+    if ((await saveTranscription({ rewrite })) && rewrite === "custom") $("transcript-edit").focus();
   });
   $("transcript-edit").addEventListener("change", (event) =>
     saveTranscription({ transcript_edit: event.target.value }),
@@ -218,6 +228,9 @@ function renderTranscription(options) {
   $("keyterms-count").textContent = `${options.keyterms.length}/${MAX_KEYTERMS}`;
   $("keyterm-input").disabled = options.keyterms.length >= MAX_KEYTERMS;
 
+  $("rewrite").value = options.rewrite;
+  $("rewrite-hint").textContent = REWRITE_HINTS[options.rewrite];
+  $("transcript-edit").hidden = options.rewrite !== "custom";
   // Don't overwrite the instruction while the user is typing it.
   if (document.activeElement !== $("transcript-edit")) {
     $("transcript-edit").value = options.transcript_edit;

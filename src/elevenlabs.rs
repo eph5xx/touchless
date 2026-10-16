@@ -96,8 +96,8 @@ fn realtime_url(base_url: &str, sample_rate: u32, options: &TranscriptionOptions
         for term in &options.keyterms {
             query.append_pair("keyterms", term);
         }
-        if !options.transcript_edit.is_empty() {
-            query.append_pair("transcript_edit", &options.transcript_edit);
+        if let Some(instruction) = options.edit_instruction() {
+            query.append_pair("transcript_edit", instruction);
         }
     }
     Ok(url)
@@ -144,7 +144,7 @@ impl ElevenLabs {
             finalize_timeout: FINALIZE_TIMEOUT,
             edit_timeout: EDIT_TIMEOUT,
             settle_window: SETTLE_WINDOW,
-            editing: !options.transcript_edit.is_empty(),
+            editing: options.edit_instruction().is_some(),
             awaiting_edits: Vec::new(),
         })
     }
@@ -331,6 +331,7 @@ impl ElevenLabs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Rewrite;
     use tokio::net::TcpListener;
 
     #[test]
@@ -407,6 +408,7 @@ mod tests {
             secondary_languages: vec!["rus".into(), "ukr".into()],
             no_verbatim: true,
             keyterms: vec!["Touchless".into(), "Scribe v2 & co".into()],
+            rewrite: Rewrite::Custom,
             transcript_edit: "Fix grammar.".into(),
         };
         let url = realtime_url(REALTIME_URL, 16_000, &options).unwrap();
@@ -426,6 +428,31 @@ mod tests {
         ]
         .map(|(key, value)| (key.to_owned(), value.to_owned()));
         assert_eq!(pairs, expected);
+    }
+
+    #[test]
+    fn sends_the_selected_rewrite() {
+        let edit_param = |rewrite| {
+            let options = TranscriptionOptions {
+                rewrite,
+                transcript_edit: "Fix grammar.".into(),
+                ..Default::default()
+            };
+            let url = realtime_url(REALTIME_URL, 16_000, &options).unwrap();
+            url.query_pairs()
+                .find(|(key, _)| key == "transcript_edit")
+                .map(|(_, value)| value.into_owned())
+        };
+        assert_eq!(edit_param(Rewrite::Off), None);
+        let enhance = TranscriptionOptions {
+            rewrite: Rewrite::Enhance,
+            ..Default::default()
+        };
+        assert_eq!(
+            edit_param(Rewrite::Enhance).as_deref(),
+            enhance.edit_instruction()
+        );
+        assert_eq!(edit_param(Rewrite::Custom).as_deref(), Some("Fix grammar."));
     }
 
     /// Fake realtime server: for every received audio message, `respond` returns the
@@ -504,6 +531,7 @@ mod tests {
 
     fn editing() -> TranscriptionOptions {
         TranscriptionOptions {
+            rewrite: Rewrite::Custom,
             transcript_edit: "Fix punctuation.".into(),
             ..Default::default()
         }
