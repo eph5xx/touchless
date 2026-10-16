@@ -1,9 +1,6 @@
 //! Menu bar icon with shortcuts to the main window.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use tauri::{
     AppHandle, Emitter, Manager, Wry, include_image,
@@ -11,7 +8,7 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
-use crate::updater::Updater;
+use crate::{recorder::Status, updater::Updater};
 
 const TRAY_ID: &str = "touchless";
 const CHECK_FOR_UPDATES: &str = "Check for Updates…";
@@ -22,11 +19,28 @@ struct UpdateItem {
     label: Mutex<String>,
 }
 
-/// Whether the menu bar should show the recording icon.
-static RECORDING: AtomicBool = AtomicBool::new(false);
+/// The latest icon requested, including changes waiting for the main thread.
+static ICON_STATE: Mutex<IconState> = Mutex::new(IconState::Idle);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IconState {
+    Idle,
+    Recording,
+    Finalizing,
+}
+
+impl From<Status> for IconState {
+    fn from(status: Status) -> Self {
+        match status {
+            Status::Idle => Self::Idle,
+            Status::Connecting | Status::Listening => Self::Recording,
+            Status::Finalizing => Self::Finalizing,
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
-enum RecordingInk {
+enum IconInk {
     Black,
     White,
 }
@@ -96,10 +110,15 @@ pub fn set_update_version(app: &AppHandle, version: Option<&str>) {
     });
 }
 
-/// Shows the red-headed jellyfish while dictation is in progress.
-pub fn set_recording(app: &AppHandle, recording: bool) {
-    if RECORDING.swap(recording, Ordering::Relaxed) == recording {
-        return;
+/// Shows red while recording and yellow while finalizing the dictation.
+pub fn set_status(app: &AppHandle, status: Status) {
+    let state = IconState::from(status);
+    {
+        let mut current = ICON_STATE.lock().unwrap();
+        if *current == state {
+            return;
+        }
+        *current = state;
     }
     // Tray calls block until the main thread runs them; posting keeps the
     // hotkey thread and async tasks from waiting on it.
@@ -108,40 +127,43 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
         let Some(tray) = handle.tray_by_id(TRAY_ID) else {
             return;
         };
-        // Read the flag here, not at post time, so out-of-order posts from
+        // Read the state here, not at post time, so out-of-order posts from
         // different threads still settle on the latest state.
-        let recording = RECORDING.load(Ordering::Relaxed);
-        let icon = if recording {
-            match recording_ink(&tray) {
-                RecordingInk::Black => include_image!("icons/recording-black.png"),
-                RecordingInk::White => include_image!("icons/recording.png"),
-            }
-        } else {
-            include_image!("icons/tray.png")
+        let state = *ICON_STATE.lock().unwrap();
+        let icon = match state {
+            IconState::Idle => include_image!("icons/tray.png"),
+            IconState::Recording => match icon_ink(&tray) {
+                IconInk::Black => include_image!("icons/recording-black.png"),
+                IconInk::White => include_image!("icons/recording.png"),
+            },
+            IconState::Finalizing => match icon_ink(&tray) {
+                IconInk::Black => include_image!("icons/finalizing-black.png"),
+                IconInk::White => include_image!("icons/finalizing.png"),
+            },
         };
         // Template images keep only the alpha channel, which would drop the
-        // red head, so the recording icon is drawn in its own colors instead.
-        if let Err(error) = tray.set_icon_with_as_template(Some(icon), !recording) {
+        // colored head, so only the idle icon is drawn as a template.
+        if let Err(error) = tray.set_icon_with_as_template(Some(icon), state == IconState::Idle) {
             eprintln!("could not update the tray icon: {error}");
         }
     });
 }
 
-/// Matches the colored recording icon to the ink macOS uses for the template icon.
+/// Matches colored icons to the ink macOS uses for the template icon.
 #[cfg(target_os = "macos")]
-fn recording_ink(tray: &tauri::tray::TrayIcon) -> RecordingInk {
+fn icon_ink(tray: &tauri::tray::TrayIcon) -> IconInk {
     use objc2_app_kit::NSAppearanceCustomization;
     use objc2_foundation::{MainThreadMarker, NSArray, NSString};
 
     tray.with_inner_tray_icon(|tray| {
         let Some(status_item) = tray.ns_status_item() else {
-            return RecordingInk::White;
+            return IconInk::White;
         };
         let Some(mtm) = MainThreadMarker::new() else {
-            return RecordingInk::White;
+            return IconInk::White;
         };
         let Some(button) = status_item.button(mtm) else {
-            return RecordingInk::White;
+            return IconInk::White;
         };
 
         let aqua = NSString::from_str("NSAppearanceNameAqua");
@@ -152,17 +174,17 @@ fn recording_ink(tray: &tauri::tray::TrayIcon) -> RecordingInk {
             .bestMatchFromAppearancesWithNames(&appearances)
             .is_some_and(|name| name.isEqualToString(&dark_aqua));
         if is_dark {
-            RecordingInk::White
+            IconInk::White
         } else {
-            RecordingInk::Black
+            IconInk::Black
         }
     })
-    .unwrap_or(RecordingInk::White)
+    .unwrap_or(IconInk::White)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn recording_ink(_tray: &tauri::tray::TrayIcon) -> RecordingInk {
-    RecordingInk::White
+fn icon_ink(_tray: &tauri::tray::TrayIcon) -> IconInk {
+    IconInk::White
 }
 
 /// Shows and focuses the main window, optionally switching to a page.
@@ -175,5 +197,22 @@ pub fn show_main(app: &AppHandle, page: Option<&str>) {
     let _ = window.set_focus();
     if let Some(page) = page {
         let _ = app.emit_to("main", "navigate", page);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_recorder_status_to_icon_state() {
+        for (status, expected) in [
+            (Status::Idle, IconState::Idle),
+            (Status::Connecting, IconState::Recording),
+            (Status::Listening, IconState::Recording),
+            (Status::Finalizing, IconState::Finalizing),
+        ] {
+            assert_eq!(IconState::from(status), expected, "{status:?}");
+        }
     }
 }
