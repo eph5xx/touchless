@@ -8,9 +8,10 @@ import {
 } from "./dictate.js";
 import { initHistory, loadHistory } from "./history.js";
 import { loadPlugins } from "./plugins.js";
+import { initMcp, loadMcp } from "./mcp.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
 
-const PAGES = ["dictate", "history", "plugins", "settings"];
+const PAGES = ["dictate", "history", "plugins", "mcp", "settings"];
 const DELIVERY_MESSAGES = {
   pasted: "Pasted into the active app",
   copied: "Copied to clipboard",
@@ -33,6 +34,7 @@ function showPage(page) {
   }
   if (page === "history") loadHistory();
   if (page === "plugins") loadPlugins();
+  if (page === "mcp") loadMcp();
   if (page === "settings") refreshPermissions();
 }
 
@@ -45,6 +47,7 @@ async function refreshPermissions() {
 const getShortcut = () => app.settings?.shortcut ?? null;
 initDictate(getShortcut);
 initHistory(getShortcut);
+initMcp();
 initSettings((settings) => {
   app.settings = settings;
   renderShortcut();
@@ -54,6 +57,10 @@ initSettings((settings) => {
 window.addEventListener("hashchange", () => showPage(currentPage()));
 // Permissions are granted in System Settings, so re-check when the user comes back.
 window.addEventListener("focus", refreshPermissions);
+// Apps may have been installed or reconfigured while Touchless was in the background.
+window.addEventListener("focus", () => {
+  if (currentPage() === "mcp") loadMcp();
+});
 
 await listen("recorder-state", (event) => {
   app.recorder = event.payload;

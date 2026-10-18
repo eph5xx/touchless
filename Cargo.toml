@@ -2,23 +2,28 @@
 name = "touchless"
 version = "0.1.0"
 edition = "2024"
+default-run = "touchless"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 cpal = "0.18"
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
-tokio = { version = "1", features = ["macros", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "process", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+toml_edit = "0.25"
 url = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
