@@ -12,6 +12,7 @@ mod plugins;
 mod recorder;
 mod settings;
 mod shortcut;
+mod sound;
 mod tray;
 
 use std::sync::Arc;
@@ -24,6 +25,7 @@ use plugin_host::{PluginHost, PluginView};
 use recorder::{Recorder, Snapshot};
 use settings::{Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
 use shortcut::Shortcut;
+use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 #[tauri::command]
@@ -245,7 +247,8 @@ fn main() {
             app.manage(db);
 
             let overlay = Overlay::new(app.handle());
-            let recorder = Arc::new(Recorder::new(app.handle().clone(), overlay));
+            let sounds = Sounds::new(app.handle());
+            let recorder = Arc::new(Recorder::new(app.handle().clone(), overlay, sounds));
             app.manage(Arc::clone(&recorder));
 
             let hotkey_recorder = Arc::clone(&recorder);
