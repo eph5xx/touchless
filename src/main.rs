@@ -44,8 +44,10 @@ fn list_transcripts(db: State<'_, Db>) -> Result<Vec<Transcript>, String> {
 }
 
 #[tauri::command]
-fn delete_transcript(db: State<'_, Db>, id: i64) -> Result<(), String> {
-    db.delete(id).map_err(|error| error.to_string())
+fn delete_transcript(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
+    db.delete(id).map_err(|error| error.to_string())?;
+    tray::transcripts_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]

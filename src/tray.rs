@@ -3,12 +3,12 @@
 use std::sync::Mutex;
 
 use tauri::{
-    AppHandle, Emitter, Manager, include_image,
+    AppHandle, Emitter, Manager, Wry, include_image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
 };
 
-use crate::recorder::Status;
+use crate::{db::Db, paste, recorder::Status};
 
 const TRAY_ID: &str = "touchless";
 
@@ -38,13 +38,34 @@ enum IconInk {
     White,
 }
 
+/// Greyed out while history is empty.
+struct CopyLastItem(MenuItem<Wry>);
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    let copy_last = MenuItem::with_id(
+        app,
+        "copy_last",
+        "Copy Last Transcript",
+        has_transcript(app),
+        None::<&str>,
+    )?;
     let open = MenuItem::with_id(app, "open", "Open Touchless", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Touchless", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &history, &settings, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &copy_last,
+            &PredefinedMenuItem::separator(app)?,
+            &open,
+            &history,
+            &settings,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    app.manage(CopyLastItem(copy_last));
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(include_image!("icons/tray.png"))
@@ -53,6 +74,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
+            "copy_last" => copy_last_transcript(app),
             "open" => show_main(app, None),
             "history" => show_main(app, Some("history")),
             "settings" => show_main(app, Some("settings")),
@@ -61,6 +83,37 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+fn copy_last_transcript(app: &AppHandle) {
+    match app.state::<Db>().latest_text() {
+        Ok(Some(text)) => {
+            if let Err(error) = paste::copy(&text) {
+                eprintln!("could not copy the last transcript: {error}");
+            }
+        }
+        Ok(None) => transcripts_changed(app),
+        Err(error) => eprintln!("could not read the last transcript: {error}"),
+    }
+}
+
+fn has_transcript(app: &AppHandle) -> bool {
+    matches!(app.state::<Db>().latest_text(), Ok(Some(_)))
+}
+
+/// Enables "Copy Last Transcript" only while there is one to copy.
+pub fn transcripts_changed(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        // Query here, not at post time, so out-of-order posts settle on the
+        // current history.
+        let enabled = has_transcript(&handle);
+        if let Some(item) = handle.try_state::<CopyLastItem>()
+            && let Err(error) = item.0.set_enabled(enabled)
+        {
+            eprintln!("could not update the tray menu: {error}");
+        }
+    });
 }
 
 /// Shows red while recording and yellow while finalizing the dictation.

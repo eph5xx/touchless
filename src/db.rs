@@ -147,6 +147,18 @@ impl Db {
             .collect()
     }
 
+    /// The text History shows first.
+    pub fn latest_text(&self) -> rusqlite::Result<Option<String>> {
+        let connection = self.connection.lock().unwrap();
+        connection
+            .query_row(
+                "SELECT text FROM transcripts ORDER BY created_at DESC, id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
         let mut connection = self.connection.lock().unwrap();
         let transaction = connection.transaction()?;
@@ -206,6 +218,18 @@ mod tests {
         let all = db.list().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].text, "second");
+    }
+
+    #[test]
+    fn latest_text_follows_inserts_and_deletes() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.latest_text().unwrap(), None);
+        db.insert("first", 1_000, 500).unwrap();
+        let second = db.insert("second", 2_000, 700).unwrap();
+        assert_eq!(db.latest_text().unwrap().as_deref(), Some("second"));
+
+        db.delete(second.id).unwrap();
+        assert_eq!(db.latest_text().unwrap().as_deref(), Some("first"));
     }
 
     fn lesson(created_at: i64) -> PluginResult {
