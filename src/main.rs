@@ -1,6 +1,7 @@
 mod db;
 mod elevenlabs;
 mod hotkey;
+mod mcp_clients;
 mod microphone;
 mod openai;
 mod overlay;
@@ -19,6 +20,7 @@ use std::sync::Arc;
 
 use db::{Db, Transcript};
 use hotkey::Hotkey;
+use mcp_clients::{ClientId, McpView};
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use plugin_host::{PluginHost, PluginView};
@@ -206,6 +208,37 @@ fn open_privacy_settings(pane: PrivacyPane) -> Result<(), String> {
     permissions::open_privacy_settings(pane)
 }
 
+fn mcp_server_path() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let dir = exe.parent().ok_or("Could not find the Touchless folder")?;
+    Ok(dir.join("touchless-mcp"))
+}
+
+#[tauri::command]
+async fn list_mcp_clients() -> Result<McpView, String> {
+    let env = mcp_clients::Env::detect().await?;
+    Ok(mcp_clients::view(&env, &mcp_server_path()?))
+}
+
+#[tauri::command]
+async fn connect_mcp_client(id: ClientId) -> Result<McpView, String> {
+    let server = mcp_server_path()?;
+    if !server.is_file() {
+        return Err(format!("touchless-mcp is missing at {}", server.display()));
+    }
+    let env = mcp_clients::Env::detect().await?;
+    mcp_clients::connect(&env, id, &server).await?;
+    Ok(mcp_clients::view(&env, &server))
+}
+
+#[tauri::command]
+async fn disconnect_mcp_client(id: ClientId) -> Result<McpView, String> {
+    let server = mcp_server_path()?;
+    let env = mcp_clients::Env::detect().await?;
+    mcp_clients::disconnect(&env, id).await?;
+    Ok(mcp_clients::view(&env, &server))
+}
+
 #[tauri::command]
 fn restart_app(app: AppHandle) {
     app.restart();
@@ -236,6 +269,9 @@ fn main() {
             get_permissions,
             request_accessibility,
             open_privacy_settings,
+            list_mcp_clients,
+            connect_mcp_client,
+            disconnect_mcp_client,
             restart_app
         ])
         .setup(|app| {

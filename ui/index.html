@@ -28,7 +28,10 @@
           <svg viewBox="0 0 24 24"><path d="M9 4.5a2 2 0 1 1 4 0V6h4v4h1.5a2 2 0 1 1 0 4H17v4H5v-4h1.5a2 2 0 1 0 0-4H5V6h4z" /></svg>
           Plugins
         </a>
-        <a href="#settings" data-page="settings">
+        <a href="#mcp" data-page="mcp">
+          <svg viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" /></svg>
+          MCP
+        </a>        <a href="#settings" data-page="settings">
           <svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>
           Settings
         </a>
@@ -99,8 +102,19 @@
         </div>
       </section>
 
-      <section id="page-settings" class="page" hidden>
+      <section id="page-mcp" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
+          <h1>MCP</h1>
+          <p class="subtitle">Let AI apps on this Mac read your past dictations. They can't change or delete anything.</p>
+        </header>
+        <div id="mcp-callouts" class="callouts"></div>
+        <h2 class="section-title">Apps</h2>
+        <div id="mcp-clients" class="card list"></div>
+        <h2 class="section-title">Try asking</h2>
+        <div id="mcp-prompts" class="card list"></div>
+      </section>
+
+      <section id="page-settings" class="page" hidden>        <header class="page-header" data-tauri-drag-region>
           <h1>Settings</h1>
           <p class="subtitle">Set up how Touchless listens and types.</p>
         </header>
