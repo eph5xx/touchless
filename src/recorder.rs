@@ -18,6 +18,7 @@ use crate::{
     plugin_api::{Dictation, Plugin},
     plugin_host::{self, PluginHost},
     settings::{OverlayStyle, Provider, Settings, TranscriptionOptions},
+    sound::{Cue, Sounds},
     tray,
 };
 
@@ -127,14 +128,16 @@ struct Inner {
 pub struct Recorder {
     app: AppHandle,
     overlay: Overlay,
+    sounds: Sounds,
     inner: Mutex<Inner>,
 }
 
 impl Recorder {
-    pub fn new(app: AppHandle, overlay: Overlay) -> Self {
+    pub fn new(app: AppHandle, overlay: Overlay, sounds: Sounds) -> Self {
         Self {
             app,
             overlay,
+            sounds,
             inner: Mutex::new(Inner {
                 snapshot: Snapshot {
                     status: Status::Idle,
@@ -178,14 +181,17 @@ impl Recorder {
                 drop(inner);
                 self.emit(&snapshot);
 
-                let token =
-                    if self.app.state::<Settings>().preferences().overlay != OverlayStyle::Off {
-                        Some(self.overlay.show())
-                    } else {
-                        // A plugin card from the previous dictation may still be up.
-                        self.overlay.hide();
-                        None
-                    };
+                let preferences = self.app.state::<Settings>().preferences();
+                if preferences.play_sounds {
+                    self.sounds.play(Cue::Start);
+                }
+                let token = if preferences.overlay != OverlayStyle::Off {
+                    Some(self.overlay.show())
+                } else {
+                    // A plugin card from the previous dictation may still be up.
+                    self.overlay.hide();
+                    None
+                };
                 self.inner.lock().unwrap().overlay_token = token;
 
                 let recorder = Arc::clone(self);
@@ -199,6 +205,9 @@ impl Recorder {
                 let snapshot = inner.snapshot.clone();
                 drop(inner);
                 self.emit(&snapshot);
+                if self.app.state::<Settings>().preferences().play_sounds {
+                    self.sounds.play(Cue::Stop);
+                }
             }
             Status::Finalizing => {
                 drop(inner);
