@@ -1,4 +1,4 @@
-use std::{error::Error, io, time::Duration};
+use std::{collections::VecDeque, error::Error, io, time::Duration};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
@@ -16,14 +16,28 @@ type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const REALTIME_URL: &str = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Upper bound for waiting on the final transcript after the user stops.
-const FINALIZE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Safety limit for waiting on unanswered commits after the user stops.
+const FINALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Upper bound for waiting on outstanding `edited_transcript` events after the
 /// user stops, when an edit instruction is set.
 const EDIT_TIMEOUT: Duration = Duration::from_secs(10);
-/// With VAD commits, a transcript for earlier speech can arrive just before the
-/// one for our manual commit, so keep listening briefly after each commit.
-const SETTLE_WINDOW: Duration = Duration::from_millis(300);
+
+/// Quiet after speech that ends a segment; matches ElevenLabs's VAD default.
+const PAUSE: Duration = Duration::from_millis(1_500);
+/// Long segments are committed at the next quiet chunk after this much audio.
+const QUIET_COMMIT_AFTER: Duration = Duration::from_secs(20);
+/// Commit regardless of the level, ahead of the server's own commit at ~36 s,
+/// which would not answer one of ours.
+const FORCE_COMMIT_AFTER: Duration = Duration::from_secs(30);
+/// The background level is the quietest chunk within this much recent audio.
+const BACKGROUND_WINDOW: Duration = Duration::from_secs(5);
+/// A chunk is speech when its RMS is this many times the background level...
+const SPEECH_RATIO: f64 = 3.0;
+/// ...and at least this loud (in 16-bit sample units, about -50 dBFS).
+const MIN_SPEECH_LEVEL: f64 = 100.0;
+/// Lower bar for "something may have been said", used to decide whether the
+/// final commit is needed, so soft last words are never skipped.
+const VOICE_RATIO: f64 = 2.0;
 
 #[derive(Debug, PartialEq)]
 pub enum TranscriptEvent {
@@ -82,7 +96,7 @@ fn realtime_url(base_url: &str, sample_rate: u32, options: &TranscriptionOptions
         query
             .append_pair("model_id", "scribe_v2_realtime")
             .append_pair("audio_format", &format!("pcm_{sample_rate}"))
-            .append_pair("commit_strategy", "vad")
+            .append_pair("commit_strategy", "manual")
             .append_pair("include_language_detection", "true");
         if let Some(code) = &options.language_code {
             query.append_pair("language_code", code);
@@ -103,15 +117,125 @@ fn realtime_url(base_url: &str, sample_rate: u32, options: &TranscriptionOptions
     Ok(url)
 }
 
+/// Decides when to commit from the loudness of each 16-bit mono PCM chunk.
+struct Segmenter {
+    sample_rate: u32,
+    /// `(rms, samples)` of recent chunks, covering at least `BACKGROUND_WINDOW`.
+    recent: VecDeque<(f64, usize)>,
+    recent_samples: usize,
+    uncommitted: usize,
+    /// Samples of quiet since the last speech chunk.
+    quiet: usize,
+    speech: bool,
+    voice: bool,
+}
+
+impl Segmenter {
+    fn new(sample_rate: u32) -> Self {
+        let window = samples(sample_rate, BACKGROUND_WINDOW);
+        Self {
+            sample_rate,
+            // A silent prior holds the background at zero until a full window
+            // of real audio has been heard, so speech right at the start counts.
+            recent: VecDeque::from([(0.0, window)]),
+            recent_samples: window,
+            uncommitted: 0,
+            quiet: 0,
+            speech: false,
+            voice: false,
+        }
+    }
+
+    /// Returns whether this chunk should be sent with a commit.
+    fn push(&mut self, chunk: &[u8]) -> bool {
+        let count = chunk.len() / 2;
+        if count == 0 {
+            return false;
+        }
+        let level = rms(chunk);
+        let background = self
+            .recent
+            .iter()
+            .map(|(level, _)| *level)
+            .fold(f64::INFINITY, f64::min);
+        let is_speech = level > (background * SPEECH_RATIO).max(MIN_SPEECH_LEVEL);
+        if level > (background * VOICE_RATIO).max(MIN_SPEECH_LEVEL) {
+            self.voice = true;
+        }
+
+        self.recent.push_back((level, count));
+        self.recent_samples += count;
+        let window = samples(self.sample_rate, BACKGROUND_WINDOW);
+        while let Some(&(_, oldest)) = self.recent.front() {
+            if self.recent_samples - oldest < window {
+                break;
+            }
+            self.recent.pop_front();
+            self.recent_samples -= oldest;
+        }
+
+        self.uncommitted += count;
+        if is_speech {
+            self.speech = true;
+            self.quiet = 0;
+        } else {
+            self.quiet += count;
+        }
+
+        let commit = (self.speech && self.quiet >= samples(self.sample_rate, PAUSE))
+            || (!is_speech && self.uncommitted >= samples(self.sample_rate, QUIET_COMMIT_AFTER))
+            || self.uncommitted >= samples(self.sample_rate, FORCE_COMMIT_AFTER);
+        if commit {
+            self.committed();
+        }
+        commit
+    }
+
+    /// Whether the audio since the last commit may contain speech.
+    fn has_voice(&self) -> bool {
+        self.voice
+    }
+
+    fn committed(&mut self) {
+        self.uncommitted = 0;
+        self.quiet = 0;
+        self.speech = false;
+        self.voice = false;
+    }
+}
+
+fn samples(sample_rate: u32, duration: Duration) -> usize {
+    (sample_rate as u128 * duration.as_millis() / 1_000) as usize
+}
+
+fn rms(chunk: &[u8]) -> f64 {
+    let (sum, count) = chunk
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| f64::from(i16::from_le_bytes(*bytes)))
+        .fold((0.0, 0usize), |(sum, count), sample| {
+            (sum + sample * sample, count + 1)
+        });
+    if count == 0 {
+        0.0
+    } else {
+        (sum / count as f64).sqrt()
+    }
+}
+
 pub struct ElevenLabs {
     socket: Socket,
     sample_rate: u32,
     finalize_timeout: Duration,
     edit_timeout: Duration,
-    settle_window: Duration,
     editing: bool,
     /// Committed texts whose `edited_transcript` has not arrived yet.
     awaiting_edits: Vec<String>,
+    segmenter: Segmenter,
+    /// With manual commits every `committed_transcript` answers one of ours.
+    commits_sent: usize,
+    commits_answered: usize,
 }
 
 impl ElevenLabs {
@@ -143,9 +267,11 @@ impl ElevenLabs {
             sample_rate,
             finalize_timeout: FINALIZE_TIMEOUT,
             edit_timeout: EDIT_TIMEOUT,
-            settle_window: SETTLE_WINDOW,
             editing: options.edit_instruction().is_some(),
             awaiting_edits: Vec::new(),
+            segmenter: Segmenter::new(sample_rate),
+            commits_sent: 0,
+            commits_answered: 0,
         })
     }
 
@@ -174,26 +300,36 @@ impl ElevenLabs {
         result
     }
 
-    /// Streams audio until the channel closes, then commits whatever audio is still
-    /// uncommitted and waits for its transcript. The latest partial transcript is
-    /// reported as committed if the server never confirms it, so no speech is lost.
+    /// Streams audio until the channel closes, then commits whatever speech is
+    /// still uncommitted and waits until every commit is answered. The latest
+    /// partial transcript is reported as committed if the server never confirms
+    /// it, so no speech is lost.
     pub async fn run(
         mut self,
-        audio: mpsc::Receiver<Vec<u8>>,
+        audio: mpsc::UnboundedReceiver<Vec<u8>>,
         mut on_event: impl FnMut(TranscriptEvent),
     ) -> Result<()> {
+        let result = self.transcribe(audio, &mut on_event).await;
+        let _ = self.socket.close(None).await;
+        result
+    }
+
+    async fn transcribe(
+        &mut self,
+        audio: mpsc::UnboundedReceiver<Vec<u8>>,
+        on_event: &mut impl FnMut(TranscriptEvent),
+    ) -> Result<()> {
         let mut pending = String::new();
-        let result = self.stream(audio, &mut pending, &mut on_event).await;
+        let result = self.stream(audio, &mut pending, on_event).await;
         if !pending.is_empty() {
             on_event(TranscriptEvent::Committed(std::mem::take(&mut pending)));
         }
-        let _ = self.socket.close(None).await;
         result
     }
 
     async fn stream(
         &mut self,
-        mut audio: mpsc::Receiver<Vec<u8>>,
+        mut audio: mpsc::UnboundedReceiver<Vec<u8>>,
         pending: &mut String,
         on_event: &mut impl FnMut(TranscriptEvent),
     ) -> Result<()> {
@@ -203,7 +339,8 @@ impl ElevenLabs {
                 chunk = audio.recv() => {
                     let Some(chunk) = chunk else { break };
                     if chunk.is_empty() { continue }
-                    self.send_chunk(&chunk, false).await?;
+                    let commit = self.segmenter.push(&chunk);
+                    self.send_chunk(&chunk, commit).await?;
                     sent_audio = true;
                 }
                 message = self.socket.next() => {
@@ -214,47 +351,62 @@ impl ElevenLabs {
         }
 
         if sent_audio {
-            // Finalization is best effort: e.g. a commit for a very short clip can be
-            // rejected, and the pending partial transcript is still a good result.
-            if let Err(error) = self.finalize(pending, on_event).await {
-                eprintln!("ElevenLabs finalization: {error}");
-            }
+            let stopped = Instant::now();
+            // Finalization is best effort: the pending partial transcript is still
+            // a good result if the server rejects or never answers a commit.
+            let hit_limit = self
+                .finalize(pending, on_event)
+                .await
+                .unwrap_or_else(|error| {
+                    eprintln!("ElevenLabs finalization: {error}");
+                    false
+                });
+            eprintln!(
+                "ElevenLabs: {} of {} commit(s) answered, finished {} ms after stop{}",
+                self.commits_answered,
+                self.commits_sent,
+                stopped.elapsed().as_millis(),
+                if hit_limit {
+                    " (hit the safety limit)"
+                } else {
+                    ""
+                }
+            );
         }
         Ok(())
     }
 
+    /// Returns whether the safety limit was hit with commits still unanswered.
     async fn finalize(
         &mut self,
         pending: &mut String,
         on_event: &mut impl FnMut(TranscriptEvent),
-    ) -> Result<()> {
-        self.send_chunk(&[], true).await?;
+    ) -> Result<bool> {
+        // A commit without new speech gets nothing back but an empty transcript
+        // or `commit_throttled`, so only send one when there may be words.
+        if self.segmenter.has_voice() {
+            self.segmenter.committed();
+            self.send_chunk(&[], true).await?;
+        }
 
         let started = Instant::now();
-        let hard_deadline = started + self.finalize_timeout;
+        let commit_deadline = started + self.finalize_timeout;
         let edit_deadline = started + self.edit_timeout;
-        let mut settle_deadline: Option<Instant> = None;
         loop {
-            let commits_deadline =
-                settle_deadline.map_or(hard_deadline, |settle| settle.min(hard_deadline));
-            let deadline = if self.awaiting_edits.is_empty() {
-                commits_deadline
-            } else {
-                commits_deadline.max(edit_deadline)
+            let answered = self.commits_answered >= self.commits_sent;
+            let deadline = match (answered, self.awaiting_edits.is_empty()) {
+                (true, true) => return Ok(false),
+                (true, false) => edit_deadline,
+                (false, true) => commit_deadline,
+                (false, false) => commit_deadline.max(edit_deadline),
             };
             let Ok(message) = tokio::time::timeout_at(deadline, self.socket.next()).await else {
-                return Ok(());
+                return Ok(!answered);
             };
             let Some(text) = self.handle(message).await? else {
-                return Ok(());
+                return Ok(false);
             };
-            match self.dispatch(&text, pending, on_event)? {
-                ServerMessage::Committed(_) if pending.is_empty() => {
-                    settle_deadline = Some(Instant::now() + self.settle_window);
-                }
-                ServerMessage::Partial(text) if !text.is_empty() => settle_deadline = None,
-                _ => {}
-            }
+            self.dispatch(&text, pending, on_event)?;
         }
     }
 
@@ -268,6 +420,9 @@ impl ElevenLabs {
         self.socket
             .send(Message::Text(message.to_string().into()))
             .await?;
+        if commit {
+            self.commits_sent += 1;
+        }
         Ok(())
     }
 
@@ -292,42 +447,41 @@ impl ElevenLabs {
         text: &str,
         pending: &mut String,
         on_event: &mut impl FnMut(TranscriptEvent),
-    ) -> Result<ServerMessage> {
-        let message = parse_server_message(text);
-        match &message {
+    ) -> Result<()> {
+        match parse_server_message(text) {
             ServerMessage::Partial(text) => {
-                pending.clone_from(text);
-                on_event(TranscriptEvent::Partial(text.clone()));
+                pending.clone_from(&text);
+                on_event(TranscriptEvent::Partial(text));
             }
             ServerMessage::Committed(text) => {
+                self.commits_answered += 1;
                 pending.clear();
                 if self.editing && !text.trim().is_empty() {
                     self.awaiting_edits.push(text.clone());
                 }
-                on_event(TranscriptEvent::Committed(text.clone()));
+                on_event(TranscriptEvent::Committed(text));
             }
             ServerMessage::Edited { text, edited } => {
                 // Edits may arrive out of commit order, so match them by text.
-                if let Some(index) = self.awaiting_edits.iter().position(|item| item == text) {
+                if let Some(index) = self.awaiting_edits.iter().position(|item| *item == text) {
                     self.awaiting_edits.remove(index);
                 }
                 on_event(TranscriptEvent::Edited {
-                    original: text.clone(),
-                    edited: edited.clone(),
+                    original: text,
+                    edited,
                 });
             }
             ServerMessage::Language(code) if !code.trim().is_empty() => {
                 on_event(TranscriptEvent::Language(code.trim().to_owned()));
             }
-            ServerMessage::Error(error) => return Err(io::Error::other(error.clone()).into()),
+            ServerMessage::Error(error) => return Err(io::Error::other(error).into()),
             ServerMessage::SessionStarted(_)
             | ServerMessage::Language(_)
             | ServerMessage::Other => {}
         }
-        Ok(message)
+        Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +551,7 @@ mod tests {
         let url = realtime_url(REALTIME_URL, 48_000, &TranscriptionOptions::default()).unwrap();
         assert_eq!(
             url.as_str(),
-            "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_48000&commit_strategy=vad&include_language_detection=true"
+            "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_48000&commit_strategy=manual&include_language_detection=true"
         );
     }
 
@@ -416,7 +570,7 @@ mod tests {
         let expected = [
             ("model_id", "scribe_v2_realtime"),
             ("audio_format", "pcm_16000"),
-            ("commit_strategy", "vad"),
+            ("commit_strategy", "manual"),
             ("include_language_detection", "true"),
             ("language_code", "eng"),
             ("secondary_languages", "rus"),
@@ -455,10 +609,98 @@ mod tests {
         assert_eq!(edit_param(Rewrite::Custom).as_deref(), Some("Fix grammar."));
     }
 
+    const RATE: u32 = 16_000;
+    /// 100 ms of samples at `RATE`.
+    const CHUNK_SAMPLES: usize = 1_600;
+
+    /// A 100 ms chunk with the given RMS (a square wave of that amplitude).
+    fn tone(level: i16) -> Vec<u8> {
+        (0..CHUNK_SAMPLES)
+            .flat_map(|index| {
+                let sample = if index % 2 == 0 { level } else { -level };
+                sample.to_le_bytes()
+            })
+            .collect()
+    }
+
+    fn speech(chunks: usize) -> Vec<Vec<u8>> {
+        vec![tone(3_000); chunks]
+    }
+
+    fn silence(chunks: usize) -> Vec<Vec<u8>> {
+        vec![tone(0); chunks]
+    }
+
+    /// Indexes of the chunks the segmenter commits with.
+    fn commits(segmenter: &mut Segmenter, chunks: &[Vec<u8>]) -> Vec<usize> {
+        chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chunk)| segmenter.push(chunk).then_some(index))
+            .collect()
+    }
+
+    #[test]
+    fn commits_after_a_pause_that_follows_speech() {
+        let audio = [speech(20), silence(30)].concat();
+        let mut segmenter = Segmenter::new(RATE);
+        assert_eq!(commits(&mut segmenter, &audio), [20 + 14]);
+        assert!(!segmenter.has_voice());
+    }
+
+    #[test]
+    fn does_not_commit_silence_alone() {
+        let mut segmenter = Segmenter::new(RATE);
+        assert_eq!(commits(&mut segmenter, &silence(150)), Vec::<usize>::new());
+        assert!(!segmenter.has_voice());
+    }
+
+    #[test]
+    fn forces_commits_on_long_segments() {
+        // Quiet audio is committed once 20 s are uncommitted.
+        let mut segmenter = Segmenter::new(RATE);
+        assert_eq!(commits(&mut segmenter, &silence(250)), [199]);
+
+        // Speech that never pauses is cut at 30 s: louder than the quietest chunk
+        // of the last 5 s by more than the speech ratio throughout.
+        let mut segmenter = Segmenter::new(RATE);
+        let rising: Vec<Vec<u8>> = (0..150)
+            .map(|index| tone((200.0 * 4f64.powf(index as f64 / 50.0)) as i16))
+            .collect();
+        let audio = [silence(150), rising].concat();
+        assert_eq!(commits(&mut segmenter, &audio), [299]);
+    }
+
+    #[test]
+    fn adapts_to_background_noise() {
+        let mut seed = 1u32;
+        let mut noise = |amplitude: f64| -> Vec<u8> {
+            (0..CHUNK_SAMPLES)
+                .flat_map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let unit = f64::from(seed >> 8) / f64::from(1u32 << 24) * 2.0 - 1.0;
+                    ((unit * amplitude) as i16).to_le_bytes()
+                })
+                .collect()
+        };
+        let mut segmenter = Segmenter::new(RATE);
+        let background: Vec<Vec<u8>> = (0..150).map(|_| noise(600.0)).collect();
+        // The noise counts as speech until it has been heard for a whole window,
+        // then ends that segment once and is quiet afterwards.
+        let early = commits(&mut segmenter, &background);
+        assert_eq!(early.len(), 1);
+        assert!((50..=70).contains(&early[0]), "{early:?}");
+        assert!(!segmenter.has_voice());
+
+        let mut audio = speech(10);
+        audio.extend((0..20).map(|_| noise(600.0)));
+        assert_eq!(commits(&mut segmenter, &audio), [10 + 14]);
+    }
+
     /// Fake realtime server: for every received audio message, `respond` returns the
     /// JSON replies to send (given whether that message was a commit).
     async fn fake_server(
-        respond: impl Fn(bool) -> Vec<(u64, &'static str)> + Send + 'static,
+        mut respond: impl FnMut(bool) -> Vec<(u64, &'static str)> + Send + 'static,
     ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -481,10 +723,45 @@ mod tests {
         format!("ws://{address}/realtime")
     }
 
-    async fn transcribe(url: &str, chunks: usize, finalize_timeout: Duration) -> Vec<String> {
+    /// Answers the n-th commit (from 1) with `replies(n)`.
+    fn per_commit(
+        replies: impl Fn(usize) -> Vec<(u64, &'static str)> + Send + 'static,
+    ) -> impl FnMut(bool) -> Vec<(u64, &'static str)> + Send + 'static {
+        let mut commits = 0;
+        move |commit| {
+            if commit {
+                commits += 1;
+                replies(commits)
+            } else {
+                vec![]
+            }
+        }
+    }
+
+    fn committed(text: &str) -> &'static str {
+        Box::leak(
+            serde_json::json!({"message_type": "committed_transcript", "text": text})
+                .to_string()
+                .into_boxed_str(),
+        )
+    }
+
+    fn edited(text: &str, edited: &str) -> &'static str {
+        Box::leak(
+            serde_json::json!({
+                "message_type": "edited_transcript",
+                "text": text,
+                "edited_text": edited,
+            })
+            .to_string()
+            .into_boxed_str(),
+        )
+    }
+
+    async fn transcribe(url: &str, audio: Vec<Vec<u8>>, finalize_timeout: Duration) -> Vec<String> {
         let events = transcribe_events(
             url,
-            chunks,
+            audio,
             &TranscriptionOptions::default(),
             finalize_timeout,
             EDIT_TIMEOUT,
@@ -501,19 +778,19 @@ mod tests {
 
     async fn transcribe_events(
         url: &str,
-        chunks: usize,
+        audio: Vec<Vec<u8>>,
         options: &TranscriptionOptions,
         finalize_timeout: Duration,
         edit_timeout: Duration,
     ) -> Vec<TranscriptEvent> {
-        let mut client = ElevenLabs::connect_to(url, "key", 16_000, options)
+        let mut client = ElevenLabs::connect_to(url, "key", RATE, options)
             .await
             .unwrap();
         client.finalize_timeout = finalize_timeout;
         client.edit_timeout = edit_timeout;
-        let (audio_tx, audio_rx) = mpsc::channel(8);
-        for _ in 0..chunks {
-            audio_tx.send(vec![0; 320]).await.unwrap();
+        let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+        for chunk in audio {
+            audio_tx.send(chunk).unwrap();
         }
         drop(audio_tx);
 
@@ -537,27 +814,70 @@ mod tests {
         }
     }
 
+    /// Speech, a pause long enough for a commit, then the last words.
+    fn two_segments() -> Vec<Vec<u8>> {
+        [speech(5), silence(15), speech(5)].concat()
+    }
+
     #[tokio::test]
-    async fn waits_for_edits_that_arrive_after_the_settle_window() {
-        let url = fake_server(|commit| {
-            if commit {
-                vec![
-                    (
-                        10,
-                        r#"{"message_type":"committed_transcript","text":"hi there"}"#,
-                    ),
-                    (
-                        600,
-                        r#"{"message_type":"edited_transcript","text":"hi there","edited_text":"Hi there."}"#,
-                    ),
-                ]
-            } else {
-                vec![]
-            }
-        })
+    async fn keeps_a_final_answer_that_arrives_late() {
+        let url = fake_server(per_commit(|commit| match commit {
+            1 => vec![(10, committed("first"))],
+            _ => vec![(1_000, committed("last words"))],
+        }))
         .await;
 
-        let events = transcribe_events(&url, 1, &editing(), FINALIZE_TIMEOUT, EDIT_TIMEOUT).await;
+        let committed = transcribe(&url, two_segments(), FINALIZE_TIMEOUT).await;
+        assert_eq!(committed, ["first", "last words"]);
+    }
+
+    #[tokio::test]
+    async fn finishes_right_after_the_last_answer() {
+        let url = fake_server(per_commit(|_| vec![(10, committed("done"))])).await;
+
+        let started = Instant::now();
+        let committed = transcribe(&url, speech(3), FINALIZE_TIMEOUT).await;
+        assert_eq!(committed, ["done"]);
+        assert!(started.elapsed() < Duration::from_millis(250));
+    }
+
+    #[tokio::test]
+    async fn counts_empty_answers() {
+        let url = fake_server(per_commit(|commit| match commit {
+            1 => vec![(0, committed(""))],
+            _ => vec![(20, committed("done"))],
+        }))
+        .await;
+
+        let started = Instant::now();
+        let committed = transcribe(&url, two_segments(), Duration::from_secs(5)).await;
+        assert_eq!(committed, ["", "done"]);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn skips_the_final_commit_after_a_pause() {
+        let url = fake_server(per_commit(|_| vec![(10, committed("only"))])).await;
+
+        let started = Instant::now();
+        let audio = [speech(5), silence(20)].concat();
+        let committed = transcribe(&url, audio, Duration::from_secs(5)).await;
+        assert_eq!(committed, ["only"]);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn waits_for_edits_after_the_last_answer() {
+        let url = fake_server(per_commit(|_| {
+            vec![
+                (10, committed("hi there")),
+                (600, edited("hi there", "Hi there.")),
+            ]
+        }))
+        .await;
+
+        let events =
+            transcribe_events(&url, speech(1), &editing(), FINALIZE_TIMEOUT, EDIT_TIMEOUT).await;
         assert_eq!(
             events,
             [
@@ -572,36 +892,20 @@ mod tests {
 
     #[tokio::test]
     async fn stops_waiting_once_all_edits_arrived() {
-        let url = fake_server(|commit| {
-            if commit {
-                vec![
-                    (
-                        10,
-                        r#"{"message_type":"committed_transcript","text":"one"}"#,
-                    ),
-                    (
-                        10,
-                        r#"{"message_type":"committed_transcript","text":"two"}"#,
-                    ),
-                    (
-                        10,
-                        r#"{"message_type":"edited_transcript","text":"two","edited_text":"Two."}"#,
-                    ),
-                    (
-                        10,
-                        r#"{"message_type":"edited_transcript","text":"one","edited_text":"One."}"#,
-                    ),
-                ]
-            } else {
-                vec![]
-            }
-        })
+        let url = fake_server(per_commit(|commit| match commit {
+            1 => vec![(10, committed("one"))],
+            _ => vec![
+                (10, committed("two")),
+                (10, edited("two", "Two.")),
+                (10, edited("one", "One.")),
+            ],
+        }))
         .await;
 
         let started = Instant::now();
         let events = transcribe_events(
             &url,
-            1,
+            two_segments(),
             &editing(),
             FINALIZE_TIMEOUT,
             Duration::from_secs(30),
@@ -613,21 +917,11 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_raw_text_when_edit_never_arrives() {
-        let url = fake_server(|commit| {
-            if commit {
-                vec![(
-                    10,
-                    r#"{"message_type":"committed_transcript","text":"raw text"}"#,
-                )]
-            } else {
-                vec![]
-            }
-        })
-        .await;
+        let url = fake_server(per_commit(|_| vec![(10, committed("raw text"))])).await;
 
         let events = transcribe_events(
             &url,
-            1,
+            speech(1),
             &editing(),
             FINALIZE_TIMEOUT,
             Duration::from_millis(500),
@@ -638,48 +932,34 @@ mod tests {
 
     #[tokio::test]
     async fn commits_short_clip_before_any_partial_arrived() {
-        let url = fake_server(|commit| {
-            if commit {
-                vec![(
-                    50,
-                    r#"{"message_type":"committed_transcript","text":"hi there"}"#,
-                )]
-            } else {
-                vec![]
-            }
-        })
-        .await;
+        let url = fake_server(per_commit(|_| vec![(50, committed("hi there"))])).await;
 
-        let committed = transcribe(&url, 2, FINALIZE_TIMEOUT).await;
+        let committed = transcribe(&url, speech(2), FINALIZE_TIMEOUT).await;
         assert_eq!(committed, ["hi there"]);
     }
 
     #[tokio::test]
-    async fn waits_for_late_commits_within_settle_window() {
+    async fn falls_back_to_partial_at_the_safety_limit() {
         let url = fake_server(|commit| {
             if commit {
-                vec![
-                    (
-                        10,
-                        r#"{"message_type":"committed_transcript","text":"first"}"#,
-                    ),
-                    (
-                        100,
-                        r#"{"message_type":"committed_transcript","text":"second"}"#,
-                    ),
-                ]
-            } else {
                 vec![]
+            } else {
+                vec![(
+                    0,
+                    r#"{"message_type":"partial_transcript","text":"almost"}"#,
+                )]
             }
         })
         .await;
 
-        let committed = transcribe(&url, 1, FINALIZE_TIMEOUT).await;
-        assert_eq!(committed, ["first", "second"]);
+        let started = Instant::now();
+        let committed = transcribe(&url, speech(1), Duration::from_millis(300)).await;
+        assert_eq!(committed, ["almost"]);
+        assert!(started.elapsed() >= Duration::from_millis(300));
     }
 
     #[tokio::test]
-    async fn falls_back_to_partial_when_commit_never_arrives() {
+    async fn falls_back_to_partial_when_commit_is_rejected() {
         let url = fake_server(|commit| {
             if commit {
                 vec![(
@@ -695,7 +975,126 @@ mod tests {
         })
         .await;
 
-        let committed = transcribe(&url, 1, Duration::from_millis(300)).await;
+        let committed = transcribe(&url, speech(1), Duration::from_millis(300)).await;
         assert_eq!(committed, ["almost"]);
+    }
+
+    /// 16 kHz mono PCM of `text` spoken by macOS `say`.
+    fn say(text: &str) -> Vec<u8> {
+        let path = std::env::temp_dir().join(format!("touchless-live-{}.wav", std::process::id()));
+        let status = std::process::Command::new("say")
+            .args(["--file-format=WAVE", "--data-format=LEI16@16000", "-o"])
+            .arg(&path)
+            .arg(text)
+            .status()
+            .expect("macOS `say` is needed for live tests");
+        assert!(status.success());
+        let wav = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let start = wav
+            .windows(4)
+            .position(|window| window == b"data")
+            .expect("WAV data chunk")
+            + 8;
+        wav[start..].to_vec()
+    }
+
+    fn live_key() -> String {
+        std::env::var("ELEVENLABS_API_KEY").expect("set ELEVENLABS_API_KEY to run live tests")
+    }
+
+    fn into_chunks(pcm: &[u8]) -> Vec<Vec<u8>> {
+        pcm.chunks(CHUNK_SAMPLES * 2).map(<[u8]>::to_vec).collect()
+    }
+
+    async fn live_dictation(real_time: bool) {
+        let mut pcm = say("The quick brown fox jumps over the lazy dog.");
+        pcm.extend(silence(20).concat());
+        pcm.extend(say("Final words are pineapple and submarine."));
+
+        let mut client = ElevenLabs::connect(&live_key(), RATE, &TranscriptionOptions::default())
+            .await
+            .unwrap();
+        let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+        let chunks = into_chunks(&pcm);
+        let feeder = tokio::spawn(async move {
+            for chunk in chunks {
+                if real_time {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                audio_tx.send(chunk).unwrap();
+            }
+        });
+
+        let mut texts = Vec::new();
+        client
+            .transcribe(audio_rx, &mut |event| {
+                if let TranscriptEvent::Committed(text) = event {
+                    texts.push(text);
+                }
+            })
+            .await
+            .unwrap();
+        feeder.await.unwrap();
+        let _ = client.socket.close(None).await;
+
+        eprintln!(
+            "live ({}): {} sent, {} answered: {texts:?}",
+            if real_time { "real time" } else { "burst" },
+            client.commits_sent,
+            client.commits_answered
+        );
+        assert_eq!(client.commits_sent, 2);
+        assert_eq!(client.commits_answered, client.commits_sent);
+        let joined = texts.join(" ").to_lowercase();
+        assert!(joined.contains("fox"), "{texts:?}");
+        assert!(joined.contains("submarine"), "{texts:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "streams to the real ElevenLabs API"]
+    async fn live_answers_every_commit_in_real_time() {
+        live_dictation(true).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "streams to the real ElevenLabs API"]
+    async fn live_answers_every_commit_after_a_backlog() {
+        live_dictation(false).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "streams to the real ElevenLabs API"]
+    async fn live_answers_empty_commits() {
+        let mut client = ElevenLabs::connect(&live_key(), RATE, &TranscriptionOptions::default())
+            .await
+            .unwrap();
+        let mut pending = String::new();
+        let mut texts = Vec::new();
+        let audio = [into_chunks(&say("Hello there.")), silence(20)];
+        for (index, chunks) in audio.iter().enumerate() {
+            for chunk in chunks {
+                client.send_chunk(chunk, false).await.unwrap();
+            }
+            client.send_chunk(&[], true).await.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while client.commits_answered <= index {
+                let message = tokio::time::timeout_at(deadline, client.socket.next())
+                    .await
+                    .expect("commit answered in time");
+                let text = client.handle(message).await.unwrap().expect("socket open");
+                client
+                    .dispatch(&text, &mut pending, &mut |event| {
+                        if let TranscriptEvent::Committed(text) = event {
+                            texts.push(text);
+                        }
+                    })
+                    .unwrap();
+            }
+        }
+        let _ = client.socket.close(None).await;
+        eprintln!("live (empty commit): {texts:?}");
+        assert_eq!(texts.len(), 2);
+        assert!(texts[1].trim().is_empty(), "{texts:?}");
     }
 }
