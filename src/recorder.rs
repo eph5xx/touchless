@@ -26,9 +26,6 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 /// Keeps the microphone open briefly after stop so the last syllable is captured.
 const POST_ROLL: Duration = Duration::from_millis(150);
-/// Room for ~25 s of 100 ms chunks, so audio recorded while the connection is
-/// still being established is not dropped.
-const AUDIO_BUFFER_CHUNKS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,7 +320,7 @@ impl Recorder {
             .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
         let options = settings.transcription();
 
-        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_BUFFER_CHUNKS);
+        let (audio_tx, audio_rx) = mpsc::unbounded_channel();
         let (rate_tx, rate_rx) = oneshot::channel();
 
         // cpal streams are not guaranteed to be Send, so the stream lives on its own

@@ -17,7 +17,7 @@ pub struct Microphone {
 }
 
 impl Microphone {
-    pub fn open(audio: mpsc::Sender<Vec<u8>>) -> Result<Self> {
+    pub fn open(audio: mpsc::UnboundedSender<Vec<u8>>) -> Result<Self> {
         let device = cpal::default_host()
             .default_input_device()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no input device found"))?;
@@ -93,11 +93,11 @@ impl Microphone {
 struct Chunker {
     pending: Vec<u8>,
     chunk_bytes: usize,
-    audio: mpsc::Sender<Vec<u8>>,
+    audio: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl Chunker {
-    fn new(chunk_bytes: usize, audio: mpsc::Sender<Vec<u8>>) -> Self {
+    fn new(chunk_bytes: usize, audio: mpsc::UnboundedSender<Vec<u8>>) -> Self {
         Self {
             pending: Vec::with_capacity(chunk_bytes * 2),
             chunk_bytes,
@@ -110,7 +110,7 @@ impl Chunker {
         if self.pending.len() >= self.chunk_bytes {
             let remainder = self.pending.split_off(self.chunk_bytes);
             let chunk = std::mem::replace(&mut self.pending, remainder);
-            let _ = self.audio.try_send(chunk);
+            let _ = self.audio.send(chunk);
         }
     }
 }
@@ -118,7 +118,7 @@ impl Chunker {
 impl Drop for Chunker {
     fn drop(&mut self) {
         if !self.pending.is_empty() {
-            let _ = self.audio.try_send(std::mem::take(&mut self.pending));
+            let _ = self.audio.send(std::mem::take(&mut self.pending));
         }
     }
 }
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn chunks_and_flushes_remainder_on_drop() {
-        let (audio_tx, mut audio_rx) = mpsc::channel(8);
+        let (audio_tx, mut audio_rx) = mpsc::unbounded_channel();
         let mut chunker = Chunker::new(4, audio_tx);
         for sample in 0..3 {
             chunker.push(sample);
