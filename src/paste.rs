@@ -32,6 +32,10 @@ pub fn deliver(
     Ok(Delivery::Pasted)
 }
 
+pub fn copy(text: &str) -> Result<(), String> {
+    platform::copy(text)
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use std::{thread, time::Duration};

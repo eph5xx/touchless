@@ -240,6 +240,7 @@ impl Recorder {
                 Ok(transcript) => {
                     transcript_id = Some(transcript.id);
                     let _ = self.app.emit("transcripts-changed", ());
+                    tray::transcripts_changed(&self.app);
                 }
                 Err(db_error) => error = Some(format!("could not save transcript: {db_error}")),
             }
