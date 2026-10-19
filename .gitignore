@@ -1,5 +1,6 @@
 /target
+/src-tauri/target
 .env
 TODO.md
-/gen/schemas
+/src-tauri/gen/schemas
 .DS_Store
