@@ -51,7 +51,7 @@ function render() {
             el(
               "p",
               {},
-              `The MCP server is missing from ${view.server_path}. Reinstall Touchless, or run \`cargo build --bin touchless-mcp\` when running from source.`,
+              `The MCP server is missing from ${view.server_path}. Reinstall Touchless, or run \`cargo build --manifest-path src-tauri/Cargo.toml --bin touchless-mcp\` when running from source.`,
             ),
           ),
         ]),

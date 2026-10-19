@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icons/128x128@2x.png" width="128" alt="Touchless">
+  <img src="src-tauri/icons/128x128@2x.png" width="128" alt="Touchless">
 </p>
 
 <h1 align="center">Touchless</h1>

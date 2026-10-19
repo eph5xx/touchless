@@ -54,7 +54,7 @@ echo "==> Building Touchless"
 # Tauri runs `xattr -cr` before signing; Homebrew's xattr shadows the system one
 # and does not support -r, so prefer the system tools.
 APPLE_SIGNING_IDENTITY="$IDENTITY" PATH="/usr/bin:$PATH" cargo tauri build --bundles app
-BUILT="target/release/bundle/macos/Touchless.app"
+BUILT="src-tauri/target/release/bundle/macos/Touchless.app"
 
 is_running() {
   [ "$(osascript -e "application id \"$BUNDLE_ID\" is running" 2>/dev/null)" = "true" ]
