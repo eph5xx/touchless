@@ -81,7 +81,8 @@ svg {
   width: 16px;
   height: 16px;
   fill: none;
-  stroke-width: 2.4;
+  stroke: currentColor;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -231,10 +232,8 @@ svg {
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: rgba(245, 245, 243, 0.55);
 }
 
@@ -281,6 +280,13 @@ svg {
 .block-arrow {
   margin: 0 6px;
   color: rgba(245, 245, 243, 0.45);
+}
+
+.block-arrow svg {
+  display: inline;
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
 }
 
 .block-text {

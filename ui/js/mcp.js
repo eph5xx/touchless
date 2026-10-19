@@ -1,4 +1,4 @@
-import { $, el, invoke, toast, copyText } from "./util.js";
+import { $, el, icon, invoke, toast, copyText } from "./util.js";
 
 const PROMPTS = [
   "What did I dictate today?",
@@ -6,12 +6,6 @@ const PROMPTS = [
   "Turn yesterday's dictations into a to-do list.",
   "Find the dictation where I talked about the release plan.",
 ];
-const BADGES = {
-  connected: ["success", "Connected"],
-  outdated: ["warning", "Needs update"],
-  disconnected: ["", "Not connected"],
-  missing: ["", "Not found"],
-};
 
 let view = null;
 let busy = false;
@@ -20,14 +14,15 @@ export function initMcp() {
   $("mcp-prompts").replaceChildren(
     ...PROMPTS.map((prompt) =>
       el(
-        "div",
-        { className: "row" },
-        el("div", { className: "row-title" }, prompt),
-        el(
-          "button",
-          { className: "secondary small", type: "button", onclick: () => copyText(prompt) },
-          "Copy",
-        ),
+        "button",
+        {
+          className: "prompt-chip",
+          type: "button",
+          title: "Copy prompt",
+          onclick: () => copyText(prompt),
+        },
+        el("span", {}, prompt),
+        icon("copy"),
       ),
     ),
   );
@@ -61,58 +56,65 @@ function render() {
           ),
         ]),
   );
-  $("mcp-clients").replaceChildren(...view.clients.map(renderClient));
+  const installed = view.clients.filter((client) => client.status !== "missing");
+  const missing = view.clients.filter((client) => client.status === "missing");
+  $("mcp-clients").replaceChildren(...[...installed, ...missing].map(renderClient));
 }
 
 function renderClient(client) {
-  const [kind, label] = BADGES[client.status];
-  const button = (text, className, action) =>
-    el("button", { className: `${className} small`, type: "button", onclick: action }, text);
-  const command = (name, busyText, done) => (event) =>
-    act(event.currentTarget, busyText, () => invoke(name, { id: client.id }), `${client.name} ${done}`);
-  const connect = (text, busyText) =>
-    button(text, "", command("connect_mcp_client", busyText, "connected"));
-  const disconnect = button(
-    "Disconnect",
-    "ghost danger",
-    command("disconnect_mcp_client", "Disconnecting…", "disconnected"),
-  );
+  const button = (text, className, busyText, name) =>
+    el(
+      "button",
+      {
+        className: `${className} small`.trim(),
+        type: "button",
+        disabled: name === "connect_mcp_client" && !view.server_exists,
+        onclick: (event) => act(event.currentTarget, busyText, client, name),
+      },
+      text,
+    );
+  const disconnect = () =>
+    button("Disconnect", "ghost", "Disconnecting…", "disconnect_mcp_client");
 
-  const actions = {
-    connected: [disconnect],
-    outdated: [connect("Update", "Updating…"), disconnect],
-    disconnected: [connect("Connect", "Connecting…")],
-    missing: [],
+  const [note, actions] = {
+    connected: [
+      null,
+      [el("span", { className: "connection-state connected" }, icon("check"), "Connected"), disconnect()],
+    ],
+    outdated: [
+      client.hint,
+      [button("Update", "", "Updating…", "connect_mcp_client"), disconnect()],
+    ],
+    disconnected: [null, [button("Connect", "", "Connecting…", "connect_mcp_client")]],
+    missing: [null, [el("span", { className: "connection-state" }, "Not installed")]],
   }[client.status];
-  for (const action of actions) {
-    if (action !== disconnect && !view.server_exists) action.disabled = true;
-  }
 
   return el(
-    "div",
-    { className: "row wrap" },
+    "article",
+    { className: `connection-row ${client.status}` },
     el(
       "div",
-      { className: "row-text" },
-      el("div", { className: "row-title" }, client.name),
-      el("div", { className: "row-subtitle" }, client.hint),
+      { className: "connection-text" },
+      el("div", { className: "connection-name" }, client.name),
+      note ? el("div", { className: "connection-note" }, note) : null,
     ),
-    el(
-      "div",
-      { className: "row-actions" },
-      el("span", { className: `badge ${kind}` }, label),
-      ...actions,
-    ),
+    el("div", { className: "connection-actions" }, ...actions),
   );
 }
 
-async function act(button, busyLabel, action, done) {
+async function act(button, busyLabel, client, command) {
   busy = true;
   for (const other of $("mcp-clients").querySelectorAll("button")) other.disabled = true;
   button.textContent = busyLabel;
   try {
-    view = await action();
-    toast(done);
+    view = await invoke(command, { id: client.id });
+    if (command === "connect_mcp_client") {
+      const updated = view.clients.find((other) => other.id === client.id);
+      const hint = updated?.status === "connected" ? updated.hint : "";
+      toast(`${client.name} connected. ${hint}`.trim(), { duration: 5000 });
+    } else {
+      toast(`${client.name} disconnected`);
+    }
   } catch (error) {
     toast(String(error), { error: true, duration: 6000 });
   } finally {

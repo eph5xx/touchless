@@ -18,7 +18,7 @@ mod tray;
 
 use std::sync::Arc;
 
-use db::{Db, Transcript};
+use db::{Db, HistoryPage, HistoryQuery};
 use hotkey::Hotkey;
 use mcp_clients::{ClientId, McpView};
 use overlay::Overlay;
@@ -40,9 +40,10 @@ fn toggle_recording(recorder: State<'_, Arc<Recorder>>) {
     recorder.toggle();
 }
 
+// Async so a search across a large history runs off the main thread.
 #[tauri::command]
-fn list_transcripts(db: State<'_, Db>) -> Result<Vec<Transcript>, String> {
-    db.list().map_err(|error| error.to_string())
+async fn list_transcripts(db: State<'_, Db>, query: HistoryQuery) -> Result<HistoryPage, String> {
+    db.list_page(&query).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

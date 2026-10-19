@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Touchless</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="redesign.css" />
     <script type="module" src="js/main.js"></script>
   </head>
   <body>
@@ -14,27 +15,34 @@
         <img src="assets/logo.svg" alt="" width="28" height="28" />
         <span>Touchless</span>
       </div>
-      <nav>
-        <a href="#dictate" data-page="dictate">
-          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-          Dictate
-          <span id="nav-dot" class="dot idle"></span>
-        </a>
-        <a href="#history" data-page="history">
-          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>
-          History
-        </a>
-        <a href="#plugins" data-page="plugins">
-          <svg viewBox="0 0 24 24"><path d="M9 4.5a2 2 0 1 1 4 0V6h4v4h1.5a2 2 0 1 1 0 4H17v4H5v-4h1.5a2 2 0 1 0 0-4H5V6h4z" /></svg>
-          Plugins
-        </a>
-        <a href="#mcp" data-page="mcp">
-          <svg viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" /></svg>
-          MCP
-        </a>        <a href="#settings" data-page="settings">
-          <svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>
-          Settings
-        </a>
+      <nav aria-label="Main navigation">
+        <div class="nav-group">
+          <a href="#dictate" data-page="dictate">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></svg>
+            Dictate
+            <span id="nav-dot" class="dot idle"></span>
+          </a>
+          <a href="#history" data-page="history">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></svg>
+            History
+          </a>
+        </div>
+        <div class="nav-group">
+          <a href="#plugins" data-page="plugins">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" /></svg>
+            Enhancements
+          </a>
+          <a href="#mcp" data-page="mcp">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22v-5" /><path d="M15 8V2" /><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z" /><path d="M9 8V2" /></svg>
+            MCP
+          </a>
+        </div>
+        <div class="nav-group nav-settings">
+          <a href="#settings" data-page="settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" /></svg>
+            Settings
+          </a>
+        </div>
       </nav>
     </aside>
 
@@ -49,28 +57,28 @@
 
         <div id="callouts" class="callouts"></div>
 
-        <div class="recorder-card card">
-          <button id="record" class="record-button idle" type="button" aria-label="Start dictation">
-            <span class="ring"></span>
-            <svg class="icon-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-            <svg class="icon-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
-            <span class="spinner"></span>
-          </button>
-          <div class="recorder-info">
+        <div class="dictation-stage">
+          <div class="stage-status">
             <div id="status-label" class="status-label">Ready</div>
             <div id="timer" class="timer">00:00</div>
-            <div id="status-hint" class="hint">Click the button to start.</div>
           </div>
-        </div>
-
-        <div class="card transcript-card">
-          <div class="card-header">
-            <h2>Live transcript</h2>
-            <button id="copy-live" class="ghost small" type="button" hidden>Copy</button>
-          </div>
-          <div class="transcript">
-            <span id="committed"></span><span id="partial" class="partial"></span>
-            <p id="transcript-empty" class="muted">Your words will appear here as you speak.</p>
+          <button id="record" class="record-button idle" type="button" aria-label="Start dictation">
+            <span class="ring"></span>
+            <svg class="icon-mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></svg>
+            <svg class="icon-stop" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" /></svg>
+            <span class="spinner"></span>
+          </button>
+          <div id="status-hint" class="hint stage-hint">Click the button to start.</div>
+          <div id="delivery-status" class="delivery-status" hidden></div>
+          <div class="stage-transcript">
+            <div class="card-header">
+              <h2>Transcript</h2>
+              <button id="copy-live" class="ghost small" type="button" hidden>Copy</button>
+            </div>
+            <div class="transcript">
+              <span id="committed"></span><span id="partial" class="partial"></span>
+              <p id="transcript-empty" class="muted">Your words will appear here as you speak.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -80,22 +88,41 @@
           <h1>History</h1>
           <p class="subtitle">Your past dictations, saved only on this Mac.</p>
         </header>
-        <div class="search">
-          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
-          <input id="history-search" type="search" placeholder="Search transcripts" autocomplete="off" />
+        <div class="library-tools">
+          <div class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg>
+            <input id="history-search" type="search" placeholder="Search transcripts" autocomplete="off" />
+          </div>
+          <div class="library-subnav">
+            <div id="history-filters" class="filter-bar" aria-label="Filter history">
+              <button class="filter active" type="button" data-history-filter="all">All</button>
+              <button class="filter" type="button" data-history-filter="today">Today</button>
+              <button class="filter" type="button" data-history-filter="week">7 days</button>
+              <button class="filter" type="button" data-history-filter="insights">With insights</button>
+            </div>
+            <span id="history-count" class="result-count"></span>
+          </div>
         </div>
         <div id="history-list" class="history"></div>
+        <div id="history-more" class="history-more" aria-hidden="true"></div>
         <div id="history-empty" class="empty" hidden>
-          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></svg>
           <p id="history-empty-text">No dictations yet.</p>
         </div>
       </section>
 
       <section id="page-plugins" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
-          <h1>Plugins</h1>
-          <p class="subtitle">Extras that run after each dictation. Your text is always pasted first.</p>
+          <h1>Enhancements</h1>
+          <p class="subtitle">Optional follow-ups that add value without slowing down your dictation.</p>
         </header>
+        <div class="enhancement-flow" aria-label="How enhancements work">
+          <span><strong>1</strong> Speak</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+          <span><strong>2</strong> Text is pasted</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+          <span><strong>3</strong> Insight appears</span>
+        </div>
         <div id="plugins-list" class="stack"></div>
         <div id="plugins-empty" class="empty" hidden>
           <p>No plugins yet.</p>
@@ -105,13 +132,12 @@
       <section id="page-mcp" class="page" hidden>
         <header class="page-header" data-tauri-drag-region>
           <h1>MCP</h1>
-          <p class="subtitle">Let AI apps on this Mac read your past dictations. They can't change or delete anything.</p>
+          <p class="subtitle">Let AI apps on your Mac read your dictation history.</p>
         </header>
         <div id="mcp-callouts" class="callouts"></div>
-        <h2 class="section-title">Apps</h2>
-        <div id="mcp-clients" class="card list"></div>
-        <h2 class="section-title">Try asking</h2>
-        <div id="mcp-prompts" class="card list"></div>
+        <div id="mcp-clients" class="collection"></div>
+        <h2 class="section-title">Try it in a connected app</h2>
+        <div id="mcp-prompts" class="prompt-grid"></div>
       </section>
 
       <section id="page-settings" class="page" hidden>        <header class="page-header" data-tauri-drag-region>
@@ -119,29 +145,68 @@
           <p class="subtitle">Set up how Touchless listens and types.</p>
         </header>
 
-        <h2 class="section-title">API keys</h2>
-        <div class="stack">
-          <div id="api-key-elevenlabs" class="card api-key"></div>
-          <div id="api-key-openai" class="card api-key"></div>
+        <div id="settings-tabs" class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button type="button" role="tab" class="active" aria-selected="true" data-settings-tab="general">General</button>
+          <button type="button" role="tab" aria-selected="false" tabindex="-1" data-settings-tab="speech">Speech</button>
+          <button type="button" role="tab" aria-selected="false" tabindex="-1" data-settings-tab="services">Services</button>
         </div>
 
-        <h2 class="section-title">Shortcut</h2>
-        <div class="card list">
-          <div class="row wrap">
-            <div class="row-text">
-              <div class="row-title">Start and stop dictation</div>
-              <div id="shortcut-hint" class="row-subtitle"></div>
+        <div class="settings-panel" role="tabpanel" data-settings-panel="general">
+          <h2 class="section-title">Shortcut</h2>
+          <div class="settings-list list">
+            <div class="row wrap">
+              <div class="row-text">
+                <div class="row-title">Start and stop dictation</div>
+                <div id="shortcut-hint" class="row-subtitle"></div>
+              </div>
+              <div class="row-actions">
+                <span id="shortcut-keys" class="shortcut-keys"></span>
+                <button id="shortcut-reset" class="ghost small" type="button">Reset</button>
+                <button id="shortcut-change" class="secondary small" type="button">Change</button>
+              </div>
             </div>
-            <div class="row-actions">
-              <span id="shortcut-keys" class="shortcut-keys"></span>
-              <button id="shortcut-reset" class="ghost small" type="button">Reset</button>
-              <button id="shortcut-change" class="secondary small" type="button">Change</button>
+          </div>
+
+          <h2 class="section-title">Output</h2>
+          <div class="settings-list list">
+            <label class="row">
+              <div>
+                <div class="row-title">Paste automatically</div>
+                <div class="row-subtitle">Puts the text where your cursor is.</div>
+              </div>
+              <input type="checkbox" class="switch" data-preference="auto_paste" />
+            </label>
+            <label class="row">
+              <div>
+                <div class="row-title">Keep my clipboard</div>
+                <div class="row-subtitle">Restores what you copied before.</div>
+              </div>
+              <input type="checkbox" class="switch" data-preference="restore_clipboard" />
+            </label>
+            <label class="row">
+              <div>
+                <div class="row-title">Play sounds</div>
+                <div class="row-subtitle">Confirms when dictation starts and stops.</div>
+              </div>
+              <input type="checkbox" class="switch" data-preference="play_sounds" />
+            </label>
+            <div class="row">
+              <div>
+                <div class="row-title">Pop-up while dictating</div>
+                <div class="row-subtitle">Choose how much live feedback appears over other apps.</div>
+              </div>
+              <select data-preference="overlay">
+                <option value="big">Full transcript</option>
+                <option value="minimal">Minimal indicator</option>
+                <option value="off">Off</option>
+              </select>
             </div>
           </div>
         </div>
 
-        <h2 class="section-title">Speech</h2>
-        <div class="card list">
+        <div class="settings-panel" role="tabpanel" data-settings-panel="speech" hidden>
+          <h2 class="section-title">Recognition</h2>
+          <div class="settings-list list">
           <div class="row column">
             <div>
               <div class="row-title">Languages</div>
@@ -186,45 +251,18 @@
             <textarea id="transcript-edit" rows="3" maxlength="2000" placeholder="Fix grammar and punctuation. Keep my wording." hidden></textarea>
           </div>
         </div>
-
-        <h2 class="section-title">Behavior</h2>
-        <div class="card list">
-          <label class="row">
-            <div>
-              <div class="row-title">Paste automatically</div>
-              <div class="row-subtitle">Puts the text where your cursor is.</div>
-            </div>
-            <input type="checkbox" class="switch" data-preference="auto_paste" />
-          </label>
-          <label class="row">
-            <div>
-              <div class="row-title">Keep my clipboard</div>
-              <div class="row-subtitle">Restores what you copied before.</div>
-            </div>
-            <input type="checkbox" class="switch" data-preference="restore_clipboard" />
-          </label>
-          <label class="row">
-            <div>
-              <div class="row-title">Play sounds</div>
-              <div class="row-subtitle">Plays a sound when dictation starts and stops.</div>
-            </div>
-            <input type="checkbox" class="switch" data-preference="play_sounds" />
-          </label>
-          <div class="row">
-            <div>
-              <div class="row-title">Pop-up while dictating</div>
-              <div class="row-subtitle">Shows at the bottom of the screen. The menu bar icon always shows when you're recording.</div>
-            </div>
-            <select data-preference="overlay">
-              <option value="big">Big (live text)</option>
-              <option value="minimal">Minimal</option>
-              <option value="off">No pop-up</option>
-            </select>
-          </div>
         </div>
 
-        <h2 class="section-title">Permissions</h2>
-        <div id="permissions" class="card list"></div>
+        <div class="settings-panel" role="tabpanel" data-settings-panel="services" hidden>
+          <h2 class="section-title">Connected services</h2>
+          <div class="stack services-stack">
+            <div id="api-key-elevenlabs" class="service-card api-key"></div>
+            <div id="api-key-openai" class="service-card api-key"></div>
+          </div>
+
+          <h2 class="section-title">System access</h2>
+          <div id="permissions" class="settings-list list"></div>
+        </div>
       </section>
     </main>
 

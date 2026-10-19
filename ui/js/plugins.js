@@ -1,8 +1,11 @@
-import { $, el, invoke, toast } from "./util.js";
+import { $, el, icon, invoke, toast } from "./util.js";
 
-/** What to tell the user about an instrument a plugin needs but is not set up. */
-const MISSING = {
-  llm: "Needs an OpenAI key",
+/** User-facing setup details for instruments an enhancement needs. */
+const DEPENDENCIES = {
+  llm: {
+    status: "Needs OpenAI",
+    action: "Set up OpenAI",
+  },
 };
 
 let plugins = [];
@@ -18,48 +21,92 @@ export async function loadPlugins() {
 }
 
 function render() {
-  $("plugins-list").replaceChildren(...plugins.map(renderPlugin));
+  const enabled = plugins.filter((plugin) => plugin.enabled);
+  const available = plugins.filter((plugin) => !plugin.enabled);
+  const group = (label, items) =>
+    items.length
+      ? [el("div", { className: "collection-label" }, label), ...items.map(renderPlugin)]
+      : [];
+
+  $("plugins-list").replaceChildren(...group("On", enabled), ...group("Available", available));
   $("plugins-empty").hidden = plugins.length > 0;
 }
 
 function renderPlugin(plugin) {
+  const missingDependencies = plugin.missing ?? [];
+  const needsSetup = missingDependencies.length > 0;
   const toggle = el("input", {
     type: "checkbox",
     className: "switch",
     checked: plugin.enabled,
+    disabled: needsSetup && !plugin.enabled,
+    ariaLabel: `${plugin.enabled ? "Turn off" : "Turn on"} ${plugin.name}`,
     title: plugin.enabled ? "Turn off" : "Turn on",
   });
   toggle.addEventListener("change", () => setEnabled(plugin, toggle.checked));
 
-  const needs = plugin.missing.map((instrument) =>
-    el(
-      "div",
-      { className: "plugin-needs" },
-      el("span", { className: "badge warning" }, MISSING[instrument] ?? `Needs ${instrument}`),
-      el(
-        "button",
-        { className: "secondary small", type: "button", onclick: () => (location.hash = "#settings") },
-        "Add key",
-      ),
-    ),
-  );
+  const status = needsSetup
+    ? ["warning", DEPENDENCIES[missingDependencies[0]]?.status ?? "Setup required"]
+    : plugin.enabled
+      ? ["success", "On"]
+      : ["", "Available"];
+
+  const setup = missingDependencies.map((instrument) => {
+    const dependency = DEPENDENCIES[instrument];
+    return el(
+      "button",
+      {
+        className: "secondary small enhancement-setup",
+        type: "button",
+        onclick: openServiceSettings,
+      },
+      dependency?.action ?? `Set up ${instrument}`,
+    );
+  });
+
+  const example =
+    plugin.id === "english_teacher"
+      ? el(
+          "div",
+          { className: "enhancement-example" },
+          el(
+            "div",
+            { className: "enhancement-example-change" },
+            el("span", { className: "enhancement-before" }, "have went"),
+            el("span", { className: "enhancement-arrow" }, icon("arrow-right")),
+            el("span", { className: "enhancement-after" }, "went"),
+          ),
+          el("p", {}, "Uses OpenAI after English dictations."),
+        )
+      : null;
 
   return el(
     "article",
-    { className: "card plugin" },
+    { className: "enhancement-row" },
     el(
-      "label",
-      { className: "plugin-head" },
+      "div",
+      { className: "enhancement-main" },
       el(
         "div",
-        { className: "plugin-text" },
-        el("div", { className: "plugin-name" }, plugin.name),
-        el("p", { className: "plugin-description" }, plugin.description),
+        { className: "enhancement-text" },
+        el("div", { className: "enhancement-name" }, plugin.name),
+        el("p", { className: "enhancement-description" }, plugin.description),
       ),
-      toggle,
+      el(
+        "div",
+        { className: "enhancement-controls" },
+        el("span", { className: `badge ${status[0]}` }, status[1]),
+        ...setup,
+        el("label", { className: "enhancement-toggle", title: toggle.title }, toggle),
+      ),
     ),
-    ...needs,
+    example,
   );
+}
+
+function openServiceSettings() {
+  location.hash = "#settings";
+  document.querySelector('[data-settings-tab="services"]')?.click();
 }
 
 async function setEnabled(plugin, enabled) {

@@ -89,7 +89,7 @@ svg {
   height: 18px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   flex-shrink: 0;
@@ -210,9 +210,7 @@ h2 {
   margin: 28px 0 10px;
   font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
+  color: var(--text);
 }
 
 .section-title:first-of-type {
@@ -576,8 +574,6 @@ input:focus {
 .status-label {
   font-weight: 600;
   font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
 }
 
@@ -851,12 +847,19 @@ textarea {
 
 .chip-remove,
 .chip-action {
-  padding: 0 6px;
+  padding: 3px 5px;
   border-radius: 999px;
   background: transparent;
   color: inherit;
   font-size: 15px;
   line-height: 1.2;
+}
+
+.chip-remove svg,
+.chip-action svg {
+  display: block;
+  width: 12px;
+  height: 12px;
 }
 
 .chip-remove:hover:not(:disabled),
@@ -878,10 +881,8 @@ textarea {
   padding: 0 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--on-accent) 20%, transparent);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .language-picker {
@@ -1005,10 +1006,8 @@ textarea {
 
 .entry-plugin-name {
   margin-bottom: 2px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -1045,6 +1044,12 @@ textarea {
 .block-arrow {
   margin: 0 6px;
   color: var(--muted);
+}
+
+.block-arrow svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
 }
 /* Toasts */
 

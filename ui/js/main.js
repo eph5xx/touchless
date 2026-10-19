@@ -19,6 +19,7 @@ const DELIVERY_MESSAGES = {
 };
 
 const app = { recorder: null, settings: null, permissions: null };
+let deliveryTimer = null;
 
 function currentPage() {
   const page = location.hash.slice(1);
@@ -64,6 +65,9 @@ window.addEventListener("focus", () => {
 
 await listen("recorder-state", (event) => {
   app.recorder = event.payload;
+  if (app.recorder.status === "connecting" || app.recorder.status === "listening") {
+    clearDeliveryStatus();
+  }
   renderRecorder(app.recorder);
   renderCallouts(app);
 });
@@ -78,8 +82,27 @@ await listen("plugins-changed", () => {
   if (currentPage() === "plugins") loadPlugins();
 });
 await listen("dictation-finished", ({ payload }) => {
-  if (payload.delivery && document.hasFocus()) toast(DELIVERY_MESSAGES[payload.delivery]);
+  if (!payload.delivery) return;
+  const message = DELIVERY_MESSAGES[payload.delivery];
+  showDeliveryStatus(message);
+  if (document.hasFocus()) toast(message);
 });
+
+function showDeliveryStatus(message) {
+  const status = document.getElementById("delivery-status");
+  if (!status) return;
+  clearTimeout(deliveryTimer);
+  status.textContent = message;
+  status.hidden = false;
+  deliveryTimer = setTimeout(clearDeliveryStatus, 7000);
+}
+
+function clearDeliveryStatus() {
+  const status = document.getElementById("delivery-status");
+  if (status) status.hidden = true;
+  clearTimeout(deliveryTimer);
+  deliveryTimer = null;
+}
 
 app.recorder = await invoke("get_state");
 app.settings = await invoke("get_settings");

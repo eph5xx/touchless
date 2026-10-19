@@ -1,3 +1,5 @@
+import { ICONS } from "./icons.js";
+
 export const { invoke } = window.__TAURI__.core;
 export const { listen } = window.__TAURI__.event;
 
@@ -15,22 +17,21 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
-/** Builds an inline SVG icon from path data strings. */
-export function icon(...paths) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** Builds a Lucide icon by name, e.g. `icon("copy")`. */
+export function icon(name, className = "") {
+  const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
-  for (const d of paths) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    svg.append(path);
+  svg.setAttribute("aria-hidden", "true");
+  if (className) svg.setAttribute("class", className);
+  for (const [tag, attributes] of ICONS[name]) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+    svg.append(node);
   }
   return svg;
 }
-
-export const ICONS = {
-  copy: ["M9 9h10v10H9z", "M5 15V5h10"],
-  trash: ["M4 7h16", "M10 11v6M14 11v6", "M6 7l1 13h10l1-13", "M9 7V4h6v3"],
-};
 
 const KEY_LABELS = {
   fn: "fn",
@@ -112,18 +113,11 @@ export function cardBlocks(card) {
           "div",
           { className: "block-change" },
           el("del", {}, block.before),
-          el("span", { className: "block-arrow" }, "→"),
+          el("span", { className: "block-arrow" }, icon("arrow-right")),
           el("ins", {}, block.after),
         )
       : el("div", { className: "block-text" }, block.text),
   );
-}
-
-/** All text in a plugin card, for search. */
-export function cardText(card) {
-  return (card?.blocks ?? [])
-    .flatMap((block) => (block.kind === "change" ? [block.before, block.after] : [block.text]))
-    .join(" ");
 }
 
 export function formatDuration(ms) {
