@@ -1,4 +1,4 @@
-import { $, el, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "./util.js";
+import { $, el, icon, invoke, toast, shortcutKeys, shortcutText, shortcutVerb } from "./util.js";
 import { languageName } from "./languages.js";
 import { initLanguagePicker, refreshLanguagePicker } from "./language-picker.js";
 
@@ -26,6 +26,7 @@ let recordingShortcut = false;
 
 export function initSettings(handleChange) {
   onChange = handleChange;
+  initSettingsTabs();
   for (const input of document.querySelectorAll("[data-preference]")) {
     input.addEventListener("change", savePreferences);
   }
@@ -72,6 +73,45 @@ export function initSettings(handleChange) {
   $("transcript-edit").addEventListener("change", (event) =>
     saveTranscription({ transcript_edit: event.target.value }),
   );
+}
+
+function initSettingsTabs() {
+  const tabs = [...document.querySelectorAll("#settings-tabs [data-settings-tab]")];
+  const panels = [...document.querySelectorAll("[data-settings-panel]")];
+  if (!tabs.length) return;
+
+  const selectTab = (name, focus = false) => {
+    const selected = tabs.find((tab) => tab.dataset.settingsTab === name) ?? tabs[0];
+
+    for (const tab of tabs) {
+      const active = tab === selected;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    }
+    for (const panel of panels) {
+      panel.hidden = panel.dataset.settingsPanel !== selected.dataset.settingsTab;
+    }
+
+    if (focus) selected.focus();
+  };
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => selectTab(tab.dataset.settingsTab));
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+      else if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = tabs.length - 1;
+      else return;
+
+      event.preventDefault();
+      selectTab(tabs[nextIndex].dataset.settingsTab, true);
+    });
+  });
+
+  selectTab("general");
 }
 
 export function renderSettings(settings) {
@@ -230,9 +270,10 @@ function languageChip(languages, code, main) {
             type: "button",
             className: "chip-action",
             title: "Make main language",
+            ariaLabel: "Make main language",
             onclick: () => saveLanguages([code, ...others]),
           },
-          "☆",
+          icon("star"),
         ),
     el(
       "button",
@@ -240,9 +281,10 @@ function languageChip(languages, code, main) {
         type: "button",
         className: "chip-remove",
         title: "Remove",
+        ariaLabel: "Remove",
         onclick: () => saveLanguages(others),
       },
-      "×",
+      icon("x"),
     ),
   );
 }
@@ -261,7 +303,11 @@ function chip(label, onRemove) {
     "span",
     { className: "chip" },
     label,
-    el("button", { type: "button", className: "chip-remove", title: "Remove", onclick: onRemove }, "×"),
+    el(
+      "button",
+      { type: "button", className: "chip-remove", title: "Remove", ariaLabel: "Remove", onclick: onRemove },
+      icon("x"),
+    ),
   );
 }
 
