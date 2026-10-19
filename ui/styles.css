@@ -1,27 +1,34 @@
 :root {
-  /* Palette taken from assets/logo.svg: ice white bell, cyan to blue to violet tentacles. */
-  --bg: #f3f8ff;
+  /*
+   * Ink & Ice: quiet neutral surfaces with cyan-blue actions and violet
+   * recording states. No gradients, so the app icon stays the colorful part.
+   */
+  color-scheme: light dark;
+  --bg: #f5f5f2;
   --surface: #ffffff;
-  --surface-2: #e8f1fc;
-  --sidebar: rgba(232, 241, 252, 0.92);
-  --text: #0b1530;
-  --muted: #5a6a86;
-  --border: #d9e4f3;
-  --accent: #246cd4;
-  --accent-strong: #1d5cba;
-  --accent-text: #246cd4;
-  --accent-soft: rgba(40, 136, 236, 0.13);
-  --accent-border: rgba(40, 136, 236, 0.28);
-  --recording: #7c4ef0;
-  --recording-soft: rgba(143, 99, 249, 0.14);
-  --busy: #d9912a;
-  --busy-soft: rgba(230, 162, 60, 0.16);
-  --success: #23955c;
-  --success-soft: rgba(47, 166, 107, 0.14);
-  --danger: #d64045;
-  --danger-soft: rgba(214, 64, 69, 0.12);
-  --shadow: 0 1px 2px rgba(11, 21, 48, 0.04), 0 4px 16px rgba(11, 21, 48, 0.06);
-  --toast: #0b1530;
+  --surface-2: #ecedea;
+  --sidebar: #ecedea;
+  --text: #18191c;
+  --muted: #686b73;
+  --border: #dadde1;
+  --accent: #116f91;
+  --accent-strong: #0d607d;
+  --accent-text: #116f91;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(17, 111, 145, 0.1);
+  --accent-border: rgba(17, 111, 145, 0.24);
+  --recording: #6f4ec4;
+  --recording-strong: #5d3faf;
+  --on-recording: #ffffff;
+  --recording-soft: #eee9fa;
+  --busy: #99651e;
+  --busy-soft: #f7eedb;
+  --success: #24784a;
+  --success-soft: #e6f3eb;
+  --danger: #b83b46;
+  --danger-soft: #f8e8ea;
+  --shadow: 0 1px 2px rgba(24, 25, 28, 0.04), 0 4px 14px rgba(24, 25, 28, 0.07);
+  --toast: #18191c;
   --radius: 14px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 14px;
@@ -35,27 +42,33 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #07090f;
-    --surface: #0f1422;
-    --surface-2: #172033;
-    --sidebar: rgba(10, 13, 22, 0.92);
-    --text: #eaf4ff;
-    --muted: #8c9bb6;
-    --border: #1e2940;
-    --accent: #2479e0;
-    --accent-strong: #2f8af0;
-    --accent-text: #48cefa;
-    --accent-soft: rgba(72, 206, 250, 0.12);
-    --accent-border: rgba(72, 206, 250, 0.24);
-    --recording: #b874f7;
-    --recording-soft: rgba(184, 116, 247, 0.16);
-    --busy: #f5b74e;
-    --success: #4cd68f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
-    --toast: #1a2540;
+    --bg: #0c0d0f;
+    --surface: #15171a;
+    --surface-2: #1f2227;
+    --sidebar: #101214;
+    --text: #f5f5f3;
+    --muted: #9a9ea7;
+    --border: #2b2f36;
+    --accent: #58beda;
+    --accent-strong: #74cbe2;
+    --accent-text: #58beda;
+    --on-accent: #092229;
+    --accent-soft: rgba(88, 190, 218, 0.12);
+    --accent-border: rgba(88, 190, 218, 0.26);
+    --recording: #a889ee;
+    --recording-strong: #b99ff2;
+    --on-recording: #211632;
+    --recording-soft: #2d2441;
+    --busy: #e3af59;
+    --busy-soft: #342918;
+    --success: #70c594;
+    --success-soft: #183126;
+    --danger: #ed7d88;
+    --danger-soft: #3a2025;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.28);
+    --toast: #1f2227;
   }
 }
-
 * {
   box-sizing: border-box;
 }
@@ -244,7 +257,7 @@ button {
   border-radius: 8px;
   border: 1px solid transparent;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   cursor: default;
   white-space: nowrap;
   transition: background 0.15s, opacity 0.15s;
@@ -420,12 +433,12 @@ input:focus {
 
 .callout.warning {
   background: var(--busy-soft);
-  border-color: rgba(230, 162, 60, 0.3);
+  border-color: color-mix(in srgb, var(--busy) 30%, transparent);
 }
 
 .callout.error {
   background: var(--danger-soft);
-  border-color: rgba(214, 64, 69, 0.3);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
 .callout.info {
@@ -450,12 +463,7 @@ input:focus {
   padding: 0;
   border-radius: 50%;
   flex-shrink: 0;
-  background: linear-gradient(145deg, #34c6f7, #2888ec 55%, #4876f3);
-  box-shadow: 0 8px 24px rgba(40, 136, 236, 0.35);
-}
-
-.record-button:hover:not(:disabled) {
-  background: linear-gradient(145deg, #4fd0fa, #3593f0 55%, #5a85f5);
+  box-shadow: 0 8px 24px var(--accent-border);
 }
 
 .record-button svg {
@@ -479,13 +487,14 @@ input:focus {
 
 .record-button.listening,
 .record-button.connecting {
-  background: linear-gradient(145deg, #b874f7, #8f63f9 55%, #6f49e4);
-  box-shadow: 0 8px 24px rgba(143, 99, 249, 0.38);
+  background: var(--recording);
+  color: var(--on-recording);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--recording) 30%, transparent);
 }
 
 .record-button.listening:hover,
 .record-button.connecting:hover {
-  background: linear-gradient(145deg, #c287f9, #9b74fa 55%, #7b57ea);
+  background: var(--recording-strong);
 }
 
 .record-button.listening .ring {
@@ -857,18 +866,18 @@ textarea {
 
 .chip.main {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .chip.main .chip-remove:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.2);
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent);
 }
 
 .chip-tag {
   margin-left: 6px;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1056,7 +1065,7 @@ textarea {
   padding: 9px 16px;
   border-radius: 10px;
   background: var(--toast);
-  color: #eaf4ff;
+  color: #f5f5f3;
   font-weight: 500;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   animation: toast-in 0.2s ease-out;
@@ -1064,6 +1073,7 @@ textarea {
 
 .toast.error {
   background: var(--danger);
+  color: var(--surface);
 }
 
 .toast.leaving {

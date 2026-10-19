@@ -30,12 +30,12 @@ body {
   height: 48px;
   padding: 0 18px 0 16px;
   border-radius: 999px;
-  background: rgba(7, 10, 20, 0.88);
-  border: 1px solid rgba(179, 228, 254, 0.12);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(179, 228, 254, 0.08);
+  background: rgba(12, 13, 15, 0.88);
+  border: 1px solid rgba(245, 245, 243, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(245, 245, 243, 0.06);
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  color: #eaf4ff;
+  color: #f5f5f3;
   animation: appear 0.18s ease-out;
 }
 
@@ -63,8 +63,8 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #b874f7;
-  box-shadow: 0 0 0 0 rgba(184, 116, 247, 0.6);
+  background: #a889ee;
+  box-shadow: 0 0 0 0 rgba(168, 137, 238, 0.6);
   animation: pulse 1.4s ease-out infinite;
 }
 
@@ -73,7 +73,7 @@ body {
   height: 12px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #f5b74e;
+  border-top-color: #e3af59;
   animation: spin 0.8s linear infinite;
 }
 
@@ -87,11 +87,11 @@ svg {
 }
 
 .check {
-  stroke: #4cd68f;
+  stroke: #70c594;
 }
 
 .cross {
-  stroke: #ff6b7d;
+  stroke: #ed7d88;
 }
 
 .listening .dot,
@@ -126,7 +126,7 @@ svg {
 
 .partial,
 .placeholder {
-  color: rgba(234, 244, 255, 0.55);
+  color: rgba(245, 245, 243, 0.55);
 }
 
 /* Show the start of an error, since it says what went wrong. */
@@ -141,7 +141,7 @@ svg {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #ffb3bd;
+  color: #ed7d88;
 }
 
 [data-style="minimal"] .pill {
@@ -160,11 +160,11 @@ svg {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: rgba(234, 244, 255, 0.6);
+  color: rgba(245, 245, 243, 0.6);
 }
 
 .finalizing .meta {
-  color: #f5b74e;
+  color: #e3af59;
 }
 
 .shake {
@@ -173,10 +173,10 @@ svg {
 
 @keyframes pulse {
   70% {
-    box-shadow: 0 0 0 8px rgba(184, 116, 247, 0);
+    box-shadow: 0 0 0 8px rgba(168, 137, 238, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(184, 116, 247, 0);
+    box-shadow: 0 0 0 0 rgba(168, 137, 238, 0);
   }
 }
 
@@ -216,12 +216,12 @@ svg {
   width: 100%;
   padding: 12px 16px 13px;
   border-radius: 16px;
-  background: rgba(7, 10, 20, 0.9);
-  border: 1px solid rgba(179, 228, 254, 0.12);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(179, 228, 254, 0.08);
+  background: rgba(12, 13, 15, 0.9);
+  border: 1px solid rgba(245, 245, 243, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(245, 245, 243, 0.06);
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  color: #eaf4ff;
+  color: #f5f5f3;
   line-height: 1.45;
   animation: appear 0.18s ease-out;
 }
@@ -235,7 +235,7 @@ svg {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: rgba(234, 244, 255, 0.55);
+  color: rgba(245, 245, 243, 0.55);
 }
 
 .card .spinner {
@@ -269,23 +269,23 @@ svg {
 }
 
 .block-change del {
-  color: #ff8f9c;
+  color: #ed7d88;
   text-decoration-thickness: 1.5px;
 }
 
 .block-change ins {
-  color: #7ee2a8;
+  color: #70c594;
   text-decoration: none;
 }
 
 .block-arrow {
   margin: 0 6px;
-  color: rgba(234, 244, 255, 0.45);
+  color: rgba(245, 245, 243, 0.45);
 }
 
 .block-text {
   font-size: 13px;
-  color: rgba(234, 244, 255, 0.85);
+  color: rgba(245, 245, 243, 0.85);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -297,16 +297,16 @@ svg {
 }
 
 .card.pending .block-text {
-  color: rgba(234, 244, 255, 0.55);
+  color: rgba(245, 245, 243, 0.55);
 }
 
 .card.success .block-text {
-  color: #7ee2a8;
+  color: #70c594;
   font-weight: 600;
 }
 
 .card.failed .block-text {
-  color: #ffb3bd;
+  color: #ed7d88;
 }
 
 /* With the pop-up off, only plugin cards show. */
