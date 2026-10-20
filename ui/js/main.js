@@ -10,6 +10,7 @@ import { initHistory, loadHistory, focusTranscript } from "./history.js";
 import { loadPlugins } from "./plugins.js";
 import { initMcp, loadMcp } from "./mcp.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
+import { initModels, renderModels } from "./models.js";
 
 const PAGES = ["dictate", "history", "plugins", "mcp", "settings"];
 const DELIVERY_MESSAGES = {
@@ -18,7 +19,7 @@ const DELIVERY_MESSAGES = {
   saved: "Saved to history",
 };
 
-const app = { recorder: null, settings: null, permissions: null };
+const app = { recorder: null, settings: null, permissions: null, models: null, whisper: null };
 let deliveryTimer = null;
 
 function currentPage() {
@@ -51,8 +52,22 @@ initHistory(getShortcut);
 initMcp();
 initSettings((settings) => {
   app.settings = settings;
+  renderModels(settings);
   renderShortcut();
   renderCallouts(app);
+});
+await initModels({
+  onSettings: (settings) => {
+    app.settings = settings;
+    renderSettings(settings);
+    renderModels(settings);
+    renderCallouts(app);
+  },
+  onState: ({ models, whisper }) => {
+    app.models = models;
+    app.whisper = whisper;
+    renderCallouts(app);
+  },
 });
 
 window.addEventListener("hashchange", () => showPage(currentPage()));
@@ -109,5 +124,6 @@ app.recorder = await invoke("get_state");
 app.settings = await invoke("get_settings");
 renderRecorder(app.recorder);
 renderSettings(app.settings);
+renderModels(app.settings);
 await refreshPermissions();
 showPage(currentPage());

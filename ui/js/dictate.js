@@ -8,6 +8,7 @@ import {
   shortcutKeys,
   shortcutText,
   shortcutVerb,
+  openSettingsTab,
 } from "./util.js";
 
 // `press` is e.g. ["Tap ", <kbd>⌥</kbd>, " ", <kbd>⌘</kbd>], or null before settings load.
@@ -116,7 +117,7 @@ const HOTKEY_MESSAGES = {
 };
 
 /** Renders the warnings above the recorder from the shared app state. */
-export function renderCallouts({ recorder, settings, permissions }) {
+export function renderCallouts({ recorder, settings, permissions, models, whisper }) {
   const callouts = [];
   const callout = (kind, text, actions = []) =>
     el(
@@ -130,12 +131,26 @@ export function renderCallouts({ recorder, settings, permissions }) {
 
   if (recorder?.error) callouts.push(callout("error", recorder.error));
 
-  if (settings && !settings.api_keys.elevenlabs.saved) {
+  if (settings?.engine === "elevenlabs" && !settings.api_keys.elevenlabs.saved) {
     callouts.push(
       callout("info", "Add your ElevenLabs API key to start dictating.", [
-        ["Open Settings", () => (location.hash = "#settings")],
+        ["Open Settings", () => openSettingsTab("services")],
       ]),
     );
+  }
+
+  const model = settings && models?.find((item) => item.id === settings.engine);
+  if (model) {
+    const openModels = [["Open Models", () => openSettingsTab("models")]];
+    if (model.state === "not_downloaded") {
+      callouts.push(callout("info", `Download ${model.name} to start dictating.`, openModels));
+    } else if (model.state === "downloading") {
+      callouts.push(callout("info", `Downloading ${model.name}…`, openModels));
+    } else if (whisper?.model === model.id && whisper.state === "loading") {
+      callouts.push(callout("info", `Loading ${model.name}…`));
+    } else if (whisper?.model === model.id && whisper.state === "failed") {
+      callouts.push(callout("error", whisper.error, openModels));
+    }
   }
 
   const hotkey = HOTKEY_MESSAGES[recorder?.hotkey];

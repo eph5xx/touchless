@@ -105,6 +105,12 @@ export function shortcutVerb(shortcut) {
   return shortcut.kind === "tap" ? "Tap" : "Press";
 }
 
+/** Opens a tab of the Settings page, e.g. `openSettingsTab("services")`. */
+export function openSettingsTab(tab) {
+  location.hash = "#settings";
+  document.querySelector(`[data-settings-tab="${tab}"]`)?.click();
+}
+
 /** Renders the blocks of a plugin card (see `plugin_api::Block`). */
 export function cardBlocks(card) {
   return (card?.blocks ?? []).map((block) =>

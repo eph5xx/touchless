@@ -10,9 +10,11 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     db::Db,
-    elevenlabs::{ElevenLabs, TranscriptEvent},
+    elevenlabs::{self, ElevenLabs, TranscriptEvent},
     hotkey::HotkeyStatus,
     microphone::Microphone,
+    models::{ModelStore, WhisperModel},
+    openai::OpenAi,
     overlay::Overlay,
     paste::{self, Delivery},
     plugin_api::{Dictation, Plugin},
@@ -20,6 +22,7 @@ use crate::{
     settings::{OverlayStyle, Provider, Settings, TranscriptionOptions},
     sound::{Cue, Sounds},
     tray,
+    whisper::{self, LocalWhisper},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -33,7 +36,7 @@ pub enum Status {
     Idle,
     Connecting,
     Listening,
-    /// The user stopped; waiting for ElevenLabs to commit the final transcript.
+    /// The user stopped; waiting for the final transcript.
     Finalizing,
 }
 
@@ -307,38 +310,31 @@ impl Recorder {
 
     async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
         let settings = self.app.state::<Settings>();
-        let api_key = settings
+        let options = settings.transcription();
+        match settings.engine().whisper() {
+            None => self.record_elevenlabs(stop, options).await,
+            Some(model) => self.record_whisper(stop, model, options).await,
+        }
+    }
+
+    async fn record_elevenlabs(
+        self: &Arc<Self>,
+        stop: std_mpsc::Receiver<()>,
+        options: TranscriptionOptions,
+    ) -> Result<()> {
+        let api_key = self
+            .app
+            .state::<Settings>()
             .api_key(Provider::ElevenLabs)
             .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
-        let options = settings.transcription();
 
-        let (audio_tx, audio_rx) = mpsc::unbounded_channel();
-        let (rate_tx, rate_rx) = oneshot::channel();
-
-        // cpal streams are not guaranteed to be Send, so the stream lives on its own
-        // thread until the stop signal arrives (or the sender is dropped).
-        std::thread::Builder::new()
-            .name("microphone".into())
-            .spawn(move || {
-                let microphone = Microphone::open(audio_tx).and_then(|microphone| {
-                    microphone.start()?;
-                    Ok(microphone)
-                });
-                match microphone {
-                    Ok(microphone) => {
-                        let _ = rate_tx.send(Ok(microphone.sample_rate()));
-                        let _ = stop.recv();
-                        std::thread::sleep(POST_ROLL);
-                    }
-                    Err(error) => {
-                        let _ = rate_tx.send(Err(error.to_string()));
-                    }
-                }
-            })?;
-
-        let sample_rate = rate_rx
-            .await
-            .map_err(|_| "microphone thread exited unexpectedly")??;
+        let (sample_rate, audio_rx) = open_microphone(stop).await?;
+        if !elevenlabs::SAMPLE_RATES.contains(&sample_rate) {
+            return Err(format!(
+                "the default microphone sample rate ({sample_rate}) is not supported by ElevenLabs"
+            )
+            .into());
+        }
         let client = ElevenLabs::connect(&api_key, sample_rate, &options).await?;
 
         self.update(|snapshot| {
@@ -348,6 +344,77 @@ impl Recorder {
         });
 
         client.run(audio_rx, |event| self.apply(event)).await
+    }
+
+    /// Records until stopped, then transcribes the whole recording at once.
+    async fn record_whisper(
+        self: &Arc<Self>,
+        stop: std_mpsc::Receiver<()>,
+        model: WhisperModel,
+        options: TranscriptionOptions,
+    ) -> Result<()> {
+        let path = {
+            let models = self.app.state::<ModelStore>();
+            if !models.is_downloaded(model) {
+                return Err(format!("Download {} in Settings → Models.", model.name()).into());
+            }
+            models.path(model)
+        };
+
+        let (sample_rate, mut audio_rx) = open_microphone(stop).await?;
+        // The microphone is already buffering, so nothing is lost while the model loads.
+        let whisper = Arc::clone(self.app.state::<Arc<LocalWhisper>>().inner());
+        let context = whisper.ready(model, path).await?;
+        self.update(|snapshot| {
+            if snapshot.status == Status::Connecting {
+                snapshot.status = Status::Listening;
+            }
+        });
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = audio_rx.recv().await {
+            chunks.push(chunk);
+        }
+        // Whisper tends to invent text such as "Thank you." for silence.
+        if !elevenlabs::contains_voice(&chunks, sample_rate) {
+            return Ok(());
+        }
+
+        let started = std::time::Instant::now();
+        let transcription = options.clone();
+        let transcript = tauri::async_runtime::spawn_blocking(move || {
+            let pcm = whisper::to_whisper_audio(&chunks, sample_rate)?;
+            whisper::transcribe(&context, &pcm, &transcription)
+        })
+        .await
+        .map_err(|error| format!("Whisper stopped unexpectedly: {error}"))??;
+        eprintln!(
+            "{}: transcribed in {} ms",
+            model.name(),
+            started.elapsed().as_millis()
+        );
+
+        let text = transcript.text;
+        self.apply(TranscriptEvent::Committed(text.clone()));
+        if let Some(language) = transcript.language {
+            self.apply(TranscriptEvent::Language(language));
+        }
+
+        let openai_key = self.app.state::<Settings>().api_key(Provider::OpenAi);
+        if let (Some(instruction), Some(key), false) = (
+            options.edit_instruction(),
+            openai_key,
+            text.trim().is_empty(),
+        ) {
+            match rewrite(key, instruction, &text).await {
+                Ok(edited) => self.apply(TranscriptEvent::Edited {
+                    original: text,
+                    edited,
+                }),
+                Err(error) => eprintln!("rewrite failed, keeping the transcript: {error}"),
+            }
+        }
+        Ok(())
     }
 
     fn apply(&self, event: TranscriptEvent) {
@@ -391,6 +458,49 @@ impl Recorder {
         let _ = self.app.emit("recorder-state", snapshot);
         tray::set_status(&self.app, snapshot.status);
     }
+}
+
+/// Opens the default microphone; returns its sample rate and the 16-bit mono
+/// PCM chunks, which end once `stop` fires (or its sender is dropped).
+async fn open_microphone(
+    stop: std_mpsc::Receiver<()>,
+) -> Result<(u32, mpsc::UnboundedReceiver<Vec<u8>>)> {
+    let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+    let (rate_tx, rate_rx) = oneshot::channel();
+
+    // cpal streams are not guaranteed to be Send, so the stream lives on its own
+    // thread until the stop signal arrives (or the sender is dropped).
+    std::thread::Builder::new()
+        .name("microphone".into())
+        .spawn(move || {
+            let microphone = Microphone::open(audio_tx).and_then(|microphone| {
+                microphone.start()?;
+                Ok(microphone)
+            });
+            match microphone {
+                Ok(microphone) => {
+                    let _ = rate_tx.send(Ok(microphone.sample_rate()));
+                    let _ = stop.recv();
+                    std::thread::sleep(POST_ROLL);
+                }
+                Err(error) => {
+                    let _ = rate_tx.send(Err(error.to_string()));
+                }
+            }
+        })?;
+
+    let sample_rate = rate_rx
+        .await
+        .map_err(|_| "microphone thread exited unexpectedly")??;
+    Ok((sample_rate, audio_rx))
+}
+
+async fn rewrite(
+    key: String,
+    instruction: &str,
+    text: &str,
+) -> std::result::Result<String, String> {
+    OpenAi::new(key)?.rewrite(instruction, text).await
 }
 
 /// The language heard most often. Without detection, the main language counts

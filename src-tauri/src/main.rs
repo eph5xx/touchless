@@ -3,6 +3,7 @@ mod elevenlabs;
 mod hotkey;
 mod mcp_clients;
 mod microphone;
+mod models;
 mod openai;
 mod overlay;
 mod paste;
@@ -16,21 +17,24 @@ mod shortcut;
 mod sound;
 mod tips;
 mod tray;
+mod whisper;
 
 use std::sync::Arc;
 
 use db::{Db, HistoryPage, HistoryQuery};
 use hotkey::Hotkey;
 use mcp_clients::{ClientId, McpView};
+use models::{ModelStore, ModelView, WhisperModel};
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use plugin_host::{PluginHost, PluginView};
 use recorder::{Recorder, Snapshot};
-use settings::{Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
+use settings::{Engine, Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
 use shortcut::Shortcut;
 use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tips::Tips;
+use whisper::{LocalWhisper, WhisperStatus};
 
 #[tauri::command]
 fn get_state(recorder: State<'_, Arc<Recorder>>) -> Snapshot {
@@ -103,6 +107,76 @@ async fn test_api_key(settings: State<'_, Settings>, provider: Provider) -> Resu
         Provider::ElevenLabs => settings::test_api_key(&key, &settings.transcription()).await,
         Provider::OpenAi => openai::OpenAi::new(key)?.verify().await,
     }
+}
+
+#[tauri::command]
+fn list_models(models: State<'_, ModelStore>) -> Vec<ModelView> {
+    models.view()
+}
+
+#[tauri::command]
+fn get_whisper_status(whisper: State<'_, Arc<LocalWhisper>>) -> WhisperStatus {
+    whisper.status()
+}
+
+#[tauri::command]
+fn download_model(
+    app: AppHandle,
+    models: State<'_, ModelStore>,
+    model: WhisperModel,
+) -> Result<Vec<ModelView>, String> {
+    models.download(&app, model, move |app| {
+        // A model selected before its file was there loads once it arrives.
+        if app.state::<Settings>().engine().whisper() == Some(model) {
+            let path = app.state::<ModelStore>().path(model);
+            app.state::<Arc<LocalWhisper>>().load(model, path);
+        }
+    })?;
+    Ok(models.view())
+}
+
+#[tauri::command]
+fn cancel_model_download(models: State<'_, ModelStore>, model: WhisperModel) {
+    models.cancel(model);
+}
+
+/// Deleting the model in use switches back to ElevenLabs.
+#[tauri::command]
+fn delete_model(
+    app: AppHandle,
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    models: State<'_, ModelStore>,
+    whisper: State<'_, Arc<LocalWhisper>>,
+    model: WhisperModel,
+) -> Result<SettingsView, String> {
+    if settings.engine().whisper() == Some(model) {
+        settings.set_engine(&db, Engine::Elevenlabs, &models)?;
+        whisper.unload();
+    }
+    let result = models.delete(model);
+    models.changed(&app);
+    result.map(|()| settings.view())
+}
+
+#[tauri::command]
+fn set_engine(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    models: State<'_, ModelStore>,
+    whisper: State<'_, Arc<LocalWhisper>>,
+    engine: Engine,
+) -> Result<SettingsView, String> {
+    let changed = settings.engine() != engine;
+    settings.set_engine(&db, engine, &models)?;
+    match engine.whisper() {
+        Some(model) if changed || !matches!(whisper.status(), WhisperStatus::Ready { .. }) => {
+            whisper.load(model, models.path(model));
+        }
+        Some(_) => {}
+        None => whisper.unload(),
+    }
+    Ok(settings.view())
 }
 
 #[tauri::command]
@@ -275,6 +349,12 @@ fn main() {
             set_api_key,
             remove_api_key,
             test_api_key,
+            list_models,
+            get_whisper_status,
+            download_model,
+            cancel_model_download,
+            delete_model,
+            set_engine,
             list_plugins,
             set_plugin_enabled,
             update_transcription,
@@ -296,6 +376,16 @@ fn main() {
             let db = Db::open(&data_dir.join("touchless.db"))?;
             let settings = Settings::load(&db);
             let shortcut = settings.shortcut();
+
+            let models = ModelStore::new(data_dir.join("models"));
+            let whisper = LocalWhisper::new(app.handle().clone());
+            if let Some(model) = settings.engine().whisper()
+                && models.is_downloaded(model)
+            {
+                whisper.load(model, models.path(model));
+            }
+            app.manage(models);
+            app.manage(whisper);
             app.manage(settings);
             app.manage(PluginHost::load(&db, plugins::all()));
             app.manage(db);
