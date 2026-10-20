@@ -15,6 +15,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const REALTIME_URL: &str = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
+pub const SAMPLE_RATES: [u32; 6] = [16_000, 48_000, 44_100, 24_000, 22_050, 8_000];
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Safety limit for waiting on unanswered commits after the user stops.
 const FINALIZE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -128,6 +129,8 @@ struct Segmenter {
     quiet: usize,
     speech: bool,
     voice: bool,
+    /// Whether any chunk so far may have contained speech; never reset.
+    heard_voice: bool,
 }
 
 impl Segmenter {
@@ -143,6 +146,7 @@ impl Segmenter {
             quiet: 0,
             speech: false,
             voice: false,
+            heard_voice: false,
         }
     }
 
@@ -161,6 +165,7 @@ impl Segmenter {
         let is_speech = level > (background * SPEECH_RATIO).max(MIN_SPEECH_LEVEL);
         if level > (background * VOICE_RATIO).max(MIN_SPEECH_LEVEL) {
             self.voice = true;
+            self.heard_voice = true;
         }
 
         self.recent.push_back((level, count));
@@ -202,6 +207,16 @@ impl Segmenter {
         self.speech = false;
         self.voice = false;
     }
+}
+
+/// Whether 16-bit mono PCM chunks may contain speech, by the same loudness
+/// rules that decide ElevenLabs commits.
+pub fn contains_voice(chunks: &[Vec<u8>], sample_rate: u32) -> bool {
+    let mut segmenter = Segmenter::new(sample_rate);
+    for chunk in chunks {
+        segmenter.push(chunk);
+    }
+    segmenter.heard_voice
 }
 
 fn samples(sample_rate: u32, duration: Duration) -> usize {
@@ -646,6 +661,16 @@ mod tests {
         let mut segmenter = Segmenter::new(RATE);
         assert_eq!(commits(&mut segmenter, &audio), [20 + 14]);
         assert!(!segmenter.has_voice());
+    }
+
+    #[test]
+    fn detects_voice_in_a_whole_recording() {
+        assert!(!contains_voice(&silence(30), RATE));
+        assert!(!contains_voice(&[], RATE));
+        assert!(contains_voice(
+            &[silence(10), speech(2), silence(30)].concat(),
+            RATE
+        ));
     }
 
     #[test]

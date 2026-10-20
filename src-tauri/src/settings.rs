@@ -2,13 +2,52 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{db::Db, shortcut::Shortcut};
+use crate::{
+    db::Db,
+    models::{ModelStore, WhisperModel},
+    shortcut::Shortcut,
+};
 
 const PREFERENCES_KEY: &str = "preferences";
+const ENGINE_KEY: &str = "engine";
 const TRANSCRIPTION_KEY: &str = "transcription";
 const SHORTCUT_KEY: &str = "shortcut";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
+
+/// What turns speech into text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Engine {
+    /// ElevenLabs Scribe, in the cloud.
+    #[default]
+    Elevenlabs,
+    WhisperLargeV3Turbo,
+    WhisperMedium,
+    WhisperSmall,
+}
+
+impl Engine {
+    /// The local model, or `None` for ElevenLabs.
+    pub fn whisper(self) -> Option<WhisperModel> {
+        match self {
+            Self::Elevenlabs => None,
+            Self::WhisperLargeV3Turbo => Some(WhisperModel::WhisperLargeV3Turbo),
+            Self::WhisperMedium => Some(WhisperModel::WhisperMedium),
+            Self::WhisperSmall => Some(WhisperModel::WhisperSmall),
+        }
+    }
+}
+
+impl From<WhisperModel> for Engine {
+    fn from(model: WhisperModel) -> Self {
+        match model {
+            WhisperModel::WhisperLargeV3Turbo => Self::WhisperLargeV3Turbo,
+            WhisperModel::WhisperMedium => Self::WhisperMedium,
+            WhisperModel::WhisperSmall => Self::WhisperSmall,
+        }
+    }
+}
 
 /// A service whose API key Touchless keeps in the Keychain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,6 +334,7 @@ pub struct ApiKeysView {
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingsView {
     api_keys: ApiKeysView,
+    engine: Engine,
     preferences: Preferences,
     transcription: TranscriptionOptions,
     shortcut: Shortcut,
@@ -304,6 +344,7 @@ pub struct SettingsView {
 /// API keys live in the macOS Keychain; everything else lives in SQLite.
 pub struct Settings {
     api_keys: Mutex<ApiKeys>,
+    engine: Mutex<Engine>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
     shortcut: Mutex<Shortcut>,
@@ -317,6 +358,7 @@ impl Settings {
         });
         Self {
             api_keys: Mutex::new(api_keys),
+            engine: Mutex::new(load_json(db, ENGINE_KEY)),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_transcription(db)),
             shortcut: Mutex::new(load_shortcut(db)),
@@ -331,6 +373,7 @@ impl Settings {
                 elevenlabs: ApiKeyStatus::of(keys.get(Provider::ElevenLabs)),
                 openai: ApiKeyStatus::of(keys.get(Provider::OpenAi)),
             },
+            engine: self.engine(),
             preferences: self.preferences(),
             transcription: self.transcription(),
             shortcut_is_default: shortcut == Shortcut::default(),
@@ -360,6 +403,22 @@ impl Settings {
         *keys.slot(provider) = next;
         keychain::save(&keys).map_err(|error| format!("could not update the Keychain: {error}"))?;
         *current = keys;
+        Ok(())
+    }
+
+    pub fn engine(&self) -> Engine {
+        *self.engine.lock().unwrap()
+    }
+
+    pub fn set_engine(&self, db: &Db, engine: Engine, models: &ModelStore) -> Result<(), String> {
+        if let Some(model) = engine.whisper()
+            && !models.is_downloaded(model)
+        {
+            return Err(format!("Download {} first", model.name()));
+        }
+        save_json(db, ENGINE_KEY, &engine)
+            .map_err(|error| format!("could not save the speech engine: {error}"))?;
+        *self.engine.lock().unwrap() = engine;
         Ok(())
     }
 
@@ -521,6 +580,58 @@ fn parse_stored_keys(bytes: &[u8]) -> Result<ApiKeys, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_defaults_to_elevenlabs_and_round_trips() {
+        assert_eq!(Engine::default(), Engine::Elevenlabs);
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(load_json::<Engine>(&db, ENGINE_KEY), Engine::Elevenlabs);
+        assert_eq!(
+            serde_json::to_string(&Engine::WhisperLargeV3Turbo).unwrap(),
+            r#""whisper_large_v3_turbo""#
+        );
+        assert_eq!(
+            serde_json::from_str::<Engine>(r#""elevenlabs""#).unwrap(),
+            Engine::Elevenlabs
+        );
+        for model in WhisperModel::ALL {
+            assert_eq!(Engine::from(model).whisper(), Some(model));
+            assert_eq!(
+                serde_json::to_value(Engine::from(model)).unwrap(),
+                serde_json::to_value(model).unwrap()
+            );
+        }
+        db.set_setting(ENGINE_KEY, r#""whisper_huge""#).unwrap();
+        assert_eq!(load_json::<Engine>(&db, ENGINE_KEY), Engine::Elevenlabs);
+    }
+
+    #[test]
+    fn set_engine_needs_a_downloaded_model() {
+        let db = Db::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let models = ModelStore::new(dir.path().to_owned());
+        let settings = Settings {
+            api_keys: Mutex::default(),
+            engine: Mutex::default(),
+            preferences: Mutex::default(),
+            transcription: Mutex::default(),
+            shortcut: Mutex::default(),
+        };
+        let small = WhisperModel::WhisperSmall;
+        assert!(settings.set_engine(&db, small.into(), &models).is_err());
+        assert_eq!(settings.engine(), Engine::Elevenlabs);
+
+        let file = std::fs::File::create(models.path(small)).unwrap();
+        file.set_len(small.spec().size).unwrap();
+        settings.set_engine(&db, small.into(), &models).unwrap();
+        assert_eq!(settings.engine(), Engine::WhisperSmall);
+        assert_eq!(load_json::<Engine>(&db, ENGINE_KEY), Engine::WhisperSmall);
+
+        settings
+            .set_engine(&db, Engine::Elevenlabs, &models)
+            .unwrap();
+        assert_eq!(settings.engine(), Engine::Elevenlabs);
+    }
 
     #[test]
     fn masks_keys() {

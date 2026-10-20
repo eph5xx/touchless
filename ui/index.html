@@ -147,6 +147,7 @@
 
         <div id="settings-tabs" class="settings-tabs" role="tablist" aria-label="Settings sections">
           <button type="button" role="tab" class="active" aria-selected="true" data-settings-tab="general">General</button>
+          <button type="button" role="tab" aria-selected="false" tabindex="-1" data-settings-tab="models">Models</button>
           <button type="button" role="tab" aria-selected="false" tabindex="-1" data-settings-tab="speech">Speech</button>
           <button type="button" role="tab" aria-selected="false" tabindex="-1" data-settings-tab="services">Services</button>
         </div>
@@ -204,6 +205,12 @@
           </div>
         </div>
 
+        <div class="settings-panel" role="tabpanel" data-settings-panel="models" hidden>
+          <h2 class="section-title">Speech recognition</h2>
+          <div id="models-list" class="collection" role="radiogroup" aria-label="Speech recognition"></div>
+          <p class="models-note">Local models run on this Mac. Your audio never leaves it.</p>
+        </div>
+
         <div class="settings-panel" role="tabpanel" data-settings-panel="speech" hidden>
           <h2 class="section-title">Recognition</h2>
           <div class="settings-list list">
@@ -218,7 +225,7 @@
               <ul id="language-results" class="language-results" role="listbox" hidden></ul>
             </div>
           </div>
-          <label class="row">
+          <label id="no-verbatim-row" class="row">
             <div>
               <div class="row-title">Remove filler words</div>
               <div class="row-subtitle">Cuts “um”, “uh”, and repeats.</div>
@@ -228,7 +235,7 @@
           <div class="row column">
             <div>
               <div class="row-title">Custom words <span id="keyterms-count" class="count"></span></div>
-              <div class="row-subtitle">Names and terms to spell right. Costs 20% more.</div>
+              <div id="keyterms-hint" class="row-subtitle"></div>
             </div>
             <div class="chips-input">
               <div id="keyterms" class="chips"></div>

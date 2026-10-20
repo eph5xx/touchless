@@ -8,7 +8,6 @@ use tokio::sync::mpsc;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-const ELEVENLABS_SAMPLE_RATES: [u32; 6] = [16_000, 48_000, 44_100, 24_000, 22_050, 8_000];
 const CHUNK_MILLISECONDS: usize = 100;
 
 pub struct Microphone {
@@ -25,17 +24,6 @@ impl Microphone {
         let config = device.default_input_config().map_err(|error| {
             io::Error::other(format!("could not read microphone format: {error}"))
         })?;
-
-        if !ELEVENLABS_SAMPLE_RATES.contains(&config.sample_rate()) {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!(
-                    "the default microphone sample rate ({}) is not supported by ElevenLabs",
-                    config.sample_rate()
-                ),
-            )
-            .into());
-        }
 
         if !matches!(
             config.sample_format(),

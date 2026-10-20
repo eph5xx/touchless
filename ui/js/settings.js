@@ -5,10 +5,12 @@ import { initLanguagePicker, refreshLanguagePicker } from "./language-picker.js"
 const MAX_KEYTERMS = 50;
 const REWRITE_HINTS = {
   off: "Pastes your words as transcribed.",
-  enhance: "Fixes grammar and smooths wording, in your voice. Costs 30% more.",
-  structure: "Adds paragraphs and lists when your text needs them. Costs 30% more.",
-  custom: "Tell it how to rewrite your text. Costs 30% more.",
+  enhance: "Fixes grammar and smooths wording, in your voice.",
+  structure: "Adds paragraphs and lists when your text needs them.",
+  custom: "Tell it how to rewrite your text.",
 };
+const REWRITE_COST = "Costs 30% more.";
+const KEYTERMS_HINT = "Names and terms to spell right.";
 const PROVIDERS = {
   elevenlabs: {
     name: "ElevenLabs",
@@ -16,7 +18,8 @@ const PROVIDERS = {
   },
   openai: {
     name: "OpenAI",
-    description: "Powers plugins like Vocabulary Coach. Your key stays in your Mac's Keychain.",
+    description:
+      "Powers Rewrite with local models and plugins like Vocabulary Coach. Your key stays in your Mac's Keychain.",
   },
 };
 
@@ -132,7 +135,7 @@ export function renderSettings(settings) {
     box.replaceChildren(...renderApiKey(provider, settings.api_keys[provider], draft));
   }
   renderShortcut(settings);
-  renderTranscription(settings.transcription);
+  renderTranscription(settings);
 }
 
 function renderShortcut(settings) {
@@ -225,17 +228,24 @@ function renderApiKey(provider, status, draft) {
   ];
 }
 
-function renderTranscription(options) {
+function renderTranscription(settings) {
+  const options = settings.transcription;
+  const local = settings.engine !== "elevenlabs";
   const languages = pickedLanguages(options);
-  $("languages-hint").textContent = languages.length
-    ? "The first one is your main language."
-    : "Touchless detects the language automatically. Add the languages you speak.";
+  $("languages-hint").textContent = !languages.length
+    ? "Touchless detects the language automatically. Add the languages you speak."
+    : local && languages.length > 1
+      ? "Whisper detects which of these languages you speak."
+      : "The first one is your main language.";
   $("languages").replaceChildren(
     ...languages.map((code, index) => languageChip(languages, code, index === 0)),
   );
   refreshLanguagePicker(languages);
 
   $("no-verbatim").checked = options.no_verbatim;
+  // Whisper has no filler-word option.
+  $("no-verbatim-row").hidden = local;
+  $("keyterms-hint").textContent = local ? KEYTERMS_HINT : `${KEYTERMS_HINT} Costs 20% more.`;
 
   $("keyterms").replaceChildren(
     ...options.keyterms.map((term) =>
@@ -247,9 +257,17 @@ function renderTranscription(options) {
   $("keyterms-count").textContent = `${options.keyterms.length}/${MAX_KEYTERMS}`;
   $("keyterm-input").disabled = options.keyterms.length >= MAX_KEYTERMS;
 
-  $("rewrite").value = options.rewrite;
-  $("rewrite-hint").textContent = REWRITE_HINTS[options.rewrite];
-  $("transcript-edit").hidden = options.rewrite !== "custom";
+  // With a local model, Rewrite runs through OpenAI, so it needs that key.
+  const canRewrite = !local || settings.api_keys.openai.saved;
+  const rewrite = canRewrite ? options.rewrite : "off";
+  $("rewrite").disabled = !canRewrite;
+  $("rewrite").value = rewrite;
+  $("rewrite-hint").textContent = !canRewrite
+    ? "Add an OpenAI key in Services."
+    : rewrite === "off"
+      ? REWRITE_HINTS.off
+      : `${REWRITE_HINTS[rewrite]} ${local ? "Uses your OpenAI key." : REWRITE_COST}`;
+  $("transcript-edit").hidden = rewrite !== "custom";
   // Don't overwrite the instruction while the user is typing it.
   if (document.activeElement !== $("transcript-edit")) {
     $("transcript-edit").value = options.transcript_edit;

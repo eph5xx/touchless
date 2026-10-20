@@ -38,6 +38,11 @@ impl OpenAi {
         Ok("Connected to OpenAI".into())
     }
 
+    /// Rewrites dictated `text` following `instruction`.
+    pub async fn rewrite(&self, instruction: &str, text: &str) -> Result<String, String> {
+        parse_rewrite(&self.respond(rewrite_request(instruction, text)).await?)
+    }
+
     async fn respond(&self, request: JsonRequest) -> Result<Value, String> {
         let response = self
             .client
@@ -99,6 +104,28 @@ fn request_body(request: &JsonRequest) -> Value {
     })
 }
 
+fn rewrite_request(instruction: &str, text: &str) -> JsonRequest {
+    JsonRequest {
+        instructions: instruction.to_owned(),
+        input: text.to_owned(),
+        schema_name: "rewrite".into(),
+        schema: json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } },
+            "required": ["text"],
+            "additionalProperties": false,
+        }),
+    }
+}
+
+fn parse_rewrite(answer: &Value) -> Result<String, String> {
+    answer["text"]
+        .as_str()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| "OpenAI returned no rewritten text".into())
+}
+
 /// Pulls the JSON answer out of a Responses API body.
 fn parse_output(body: &Value) -> Result<Value, String> {
     let contents = body["output"]
@@ -147,6 +174,30 @@ mod tests {
             body["text"]["format"]["schema"],
             json!({ "type": "object" })
         );
+    }
+
+    #[test]
+    fn builds_and_reads_a_rewrite() {
+        let body = request_body(&rewrite_request("Fix grammar.", "i goes home"));
+        assert_eq!(body["instructions"], "Fix grammar.");
+        assert_eq!(body["input"], "i goes home");
+        assert_eq!(body["text"]["format"]["name"], "rewrite");
+        assert_eq!(body["text"]["format"]["strict"], true);
+        assert_eq!(
+            body["text"]["format"]["schema"]["required"],
+            json!(["text"])
+        );
+
+        let response = json!({
+            "output": [{
+                "type": "message",
+                "content": [{ "type": "output_text", "text": "{\"text\":\" I go home. \"}" }]
+            }]
+        });
+        let answer = parse_output(&response).unwrap();
+        assert_eq!(parse_rewrite(&answer), Ok("I go home.".into()));
+        assert!(parse_rewrite(&json!({ "text": " " })).is_err());
+        assert!(parse_rewrite(&json!({})).is_err());
     }
 
     #[test]
