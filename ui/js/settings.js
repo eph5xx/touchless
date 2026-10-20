@@ -16,7 +16,7 @@ const PROVIDERS = {
   },
   openai: {
     name: "OpenAI",
-    description: "Powers plugins like English Teacher. Your key stays in your Mac's Keychain.",
+    description: "Powers plugins like Vocabulary Coach. Your key stays in your Mac's Keychain.",
   },
 };
 

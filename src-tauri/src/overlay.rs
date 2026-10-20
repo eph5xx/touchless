@@ -13,9 +13,9 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 const LABEL: &str = "overlay";
 const WIDTH: f64 = 520.0;
-/// Tall enough for a plugin card above the pill. The window is transparent and
-/// ignores the mouse, so the empty part never gets in the way.
-const HEIGHT: f64 = 340.0;
+/// Room for the pill and its shadow. The window is transparent and ignores the
+/// mouse, so the empty part never gets in the way.
+const HEIGHT: f64 = 132.0;
 const BOTTOM_MARGIN: f64 = 24.0;
 
 pub struct Overlay {
@@ -53,19 +53,8 @@ impl Overlay {
         token
     }
 
-    /// Hides now and cancels pending hides.
-    pub fn hide(&self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        let app = self.app.clone();
-        let _ = self.app.run_on_main_thread(move || {
-            if let Some(window) = app.get_webview_window(LABEL) {
-                order_out(&window);
-            }
-        });
-    }
-
-    /// Hides after `delay`, unless the overlay was shown or hidden again since the
-    /// `show` that returned `token`.
+    /// Hides after `delay`, unless the overlay was shown again since the `show`
+    /// that returned `token`.
     pub fn hide_after(&self, token: u64, delay: Duration) {
         let generation = Arc::clone(&self.generation);
         let expected = token;
@@ -115,7 +104,7 @@ fn ns_window(window: &WebviewWindow) -> Option<&objc2_app_kit::NSWindow> {
 }
 
 #[cfg(target_os = "macos")]
-fn configure_native(window: &WebviewWindow) {
+pub(crate) fn configure_native(window: &WebviewWindow) {
     use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior};
 
     let Some(ns_window) = ns_window(window) else {
@@ -132,7 +121,7 @@ fn configure_native(window: &WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
-fn order_front(window: &WebviewWindow) {
+pub(crate) fn order_front(window: &WebviewWindow) {
     // Unlike `show()`, this does not make the window key or activate the app.
     if let Some(ns_window) = ns_window(window) {
         ns_window.orderFrontRegardless();
@@ -140,18 +129,18 @@ fn order_front(window: &WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
-fn order_out(window: &WebviewWindow) {
+pub(crate) fn order_out(window: &WebviewWindow) {
     if let Some(ns_window) = ns_window(window) {
         ns_window.orderOut(None);
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn order_front(window: &WebviewWindow) {
+pub(crate) fn order_front(window: &WebviewWindow) {
     let _ = window.show();
 }
 
 #[cfg(not(target_os = "macos"))]
-fn order_out(window: &WebviewWindow) {
+pub(crate) fn order_out(window: &WebviewWindow) {
     let _ = window.hide();
 }

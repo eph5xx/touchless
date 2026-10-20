@@ -36,6 +36,23 @@
         "focus": false,
         "acceptFirstMouse": false,
         "visibleOnAllWorkspaces": true
+      },
+      {
+        "label": "tips",
+        "url": "tips.html",
+        "title": "Touchless Tips",
+        "width": 360,
+        "height": 260,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "acceptFirstMouse": false,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {

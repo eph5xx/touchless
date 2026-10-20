@@ -72,11 +72,11 @@ function renderPlugin(plugin) {
           el(
             "div",
             { className: "enhancement-example-change" },
-            el("span", { className: "enhancement-before" }, "have went"),
+            el("span", { className: "enhancement-before" }, "simple"),
             el("span", { className: "enhancement-arrow" }, icon("arrow-right")),
-            el("span", { className: "enhancement-after" }, "went"),
+            el("span", { className: "enhancement-after" }, "casual"),
           ),
-          el("p", {}, "Uses OpenAI after English dictations."),
+          el("p", {}, "relaxed and informal · Uses OpenAI after English dictations."),
         )
       : null;
 

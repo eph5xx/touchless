@@ -56,7 +56,7 @@ pub enum Block {
 }
 
 /// What a plugin has to say about a dictation. The app decides where it is shown
-/// (the pop-up and History), so plugins need no UI code.
+/// (a card at the top-right of the screen and History), so plugins need no UI code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Card {
     pub tone: Tone,
@@ -83,8 +83,8 @@ pub struct Tools<'a> {
 pub trait Plugin: Send + Sync {
     fn manifest(&self) -> &'static Manifest;
 
-    /// A quick check of whether this dictation is worth handling. The pop-up shows
-    /// a "checking" state only for plugins that return true.
+    /// A quick check of whether this dictation is worth handling. Only plugins
+    /// that return true run.
     fn wants(&self, dictation: &Dictation) -> bool;
 
     /// `Ok(None)` means the plugin has nothing to say; nothing is shown or saved.

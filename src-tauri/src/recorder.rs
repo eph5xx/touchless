@@ -182,13 +182,7 @@ impl Recorder {
                 if preferences.play_sounds {
                     self.sounds.play(Cue::Start);
                 }
-                let token = if preferences.overlay != OverlayStyle::Off {
-                    Some(self.overlay.show())
-                } else {
-                    // A plugin card from the previous dictation may still be up.
-                    self.overlay.hide();
-                    None
-                };
+                let token = (preferences.overlay != OverlayStyle::Off).then(|| self.overlay.show());
                 self.inner.lock().unwrap().overlay_token = token;
 
                 let recorder = Arc::clone(self);
@@ -277,20 +271,18 @@ impl Recorder {
             snapshot.error = error;
         });
 
-        // Plugins run after the paste, while the user is free to dictate again.
-        match transcript_id.and_then(|id| self.plugins_for(id, &text, &languages)) {
-            None => {
-                if let Some(token) = overlay_token {
-                    self.overlay.hide_after(token, hide_delay);
-                }
-            }
-            Some((plugins, dictation)) => {
-                // Plugin cards show even when the pop-up is off.
-                let token = overlay_token.unwrap_or_else(|| self.overlay.show());
-                let finished = plugin_host::run(&self.app, plugins, dictation).await;
-                self.overlay
-                    .hide_after(token, plugin_host::display_time(&finished));
-            }
+        if let Some(token) = overlay_token {
+            self.overlay.hide_after(token, hide_delay);
+        }
+
+        // Plugins run in the background after the paste; nothing waits for them.
+        if let Some((plugins, dictation)) =
+            transcript_id.and_then(|id| self.plugins_for(id, &text, &languages))
+        {
+            let app = self.app.clone();
+            tauri::async_runtime::spawn(async move {
+                plugin_host::run(&app, plugins, dictation).await;
+            });
         }
     }
 

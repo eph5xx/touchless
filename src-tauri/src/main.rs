@@ -14,6 +14,7 @@ mod recorder;
 mod settings;
 mod shortcut;
 mod sound;
+mod tips;
 mod tray;
 
 use std::sync::Arc;
@@ -29,6 +30,7 @@ use settings::{Preferences, Provider, Settings, SettingsView, TranscriptionOptio
 use shortcut::Shortcut;
 use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tips::Tips;
 
 #[tauri::command]
 fn get_state(recorder: State<'_, Arc<Recorder>>) -> Snapshot {
@@ -286,6 +288,7 @@ fn main() {
             app.manage(db);
 
             let overlay = Overlay::new(app.handle());
+            app.manage(Tips::new(app.handle()));
             let sounds = Sounds::new(app.handle());
             let recorder = Arc::new(Recorder::new(app.handle().clone(), overlay, sounds));
             app.manage(Arc::clone(&recorder));

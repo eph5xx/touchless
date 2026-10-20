@@ -1,5 +1,5 @@
-//! Runs plugins after each dictation, lends them the app's instruments, shows
-//! their progress in the pop-up and saves their cards to history.
+//! Runs plugins in the background after each dictation, lends them the app's
+//! instruments, shows their cards at the top-right and saves them to history.
 
 use std::{
     collections::BTreeSet,
@@ -14,10 +14,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     db::{Db, PluginResult},
     openai::OpenAi,
-    plugin_api::{
-        Block, BoxFuture, Card, Dictation, Instrument, JsonRequest, Llm, Plugin, Tone, Tools,
-    },
+    plugin_api::{Block, BoxFuture, Card, Dictation, Instrument, JsonRequest, Llm, Plugin, Tools},
     settings::{self, Provider, Settings},
+    tips::Tips,
 };
 
 const PLUGINS_KEY: &str = "plugins";
@@ -37,22 +36,6 @@ pub struct PluginView {
     enabled: bool,
     /// Instruments the plugin needs that are not set up yet.
     missing: Vec<Instrument>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct PluginStarted {
-    transcript_id: i64,
-    plugin_id: &'static str,
-    plugin_name: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PluginFinished {
-    transcript_id: i64,
-    plugin_id: &'static str,
-    plugin_name: &'static str,
-    card: Option<Card>,
-    error: Option<String>,
 }
 
 pub struct PluginHost {
@@ -155,12 +138,8 @@ impl Llm for Unavailable {
     }
 }
 
-/// Runs `plugins` on a dictation and reports each result as it arrives.
-pub async fn run(
-    app: &AppHandle,
-    plugins: Vec<Arc<dyn Plugin>>,
-    dictation: Dictation,
-) -> Vec<PluginFinished> {
+/// Runs `plugins` on a dictation; each card shows as soon as its plugin answers.
+pub async fn run(app: &AppHandle, plugins: Vec<Arc<dyn Plugin>>, dictation: Dictation) {
     let openai_key = app.state::<Settings>().api_key(Provider::OpenAi);
     let llm: Box<dyn Llm> = match openai_key.map(OpenAi::new) {
         Some(Ok(client)) => Box::new(client),
@@ -169,90 +148,56 @@ pub async fn run(
     };
     let tools = Tools { llm: llm.as_ref() };
 
-    for plugin in &plugins {
-        let manifest = plugin.manifest();
-        let _ = app.emit(
-            "plugin-started",
-            PluginStarted {
-                transcript_id: dictation.transcript_id,
-                plugin_id: manifest.id,
-                plugin_name: manifest.name,
-            },
-        );
-    }
-    let finished = join_all(
+    let saved = join_all(
         plugins
             .iter()
             .map(|plugin| run_one(app, plugin.as_ref(), &dictation, &tools)),
     )
     .await;
-    if finished.iter().any(|result| result.card.is_some()) {
+    if saved.contains(&true) {
         let _ = app.emit("transcripts-changed", ());
     }
-    finished
 }
 
+/// Returns whether the plugin produced a card.
 async fn run_one(
     app: &AppHandle,
     plugin: &dyn Plugin,
     dictation: &Dictation,
     tools: &Tools<'_>,
-) -> PluginFinished {
+) -> bool {
     let manifest = plugin.manifest();
     let outcome = tokio::time::timeout(PLUGIN_TIMEOUT, plugin.on_dictation(dictation, tools))
         .await
         .unwrap_or_else(|_| Err("took too long to answer".into()));
-    let (card, error) = match outcome {
-        Ok(card) => (card, None),
+    let card = match outcome {
+        Ok(Some(card)) => card,
+        Ok(None) => return false,
+        // Errors stay out of sight so a flaky network never interrupts work.
         Err(error) => {
             eprintln!("{} failed: {error}", manifest.name);
-            (None, Some(error))
+            return false;
         }
     };
 
-    if let Some(card) = &card {
-        let result = PluginResult {
-            plugin_id: manifest.id.to_owned(),
-            plugin_name: manifest.name.to_owned(),
-            card: serde_json::to_value(card).unwrap_or_default(),
-            created_at: now_ms(),
-        };
-        if let Err(error) = app
-            .state::<Db>()
-            .insert_plugin_result(dictation.transcript_id, &result)
-        {
-            eprintln!("could not save the {} result: {error}", manifest.name);
-        }
+    let result = PluginResult {
+        plugin_id: manifest.id.to_owned(),
+        plugin_name: manifest.name.to_owned(),
+        card: serde_json::to_value(&card).unwrap_or_default(),
+        created_at: now_ms(),
+    };
+    if let Err(error) = app
+        .state::<Db>()
+        .insert_plugin_result(dictation.transcript_id, &result)
+    {
+        eprintln!("could not save the {} result: {error}", manifest.name);
     }
-
-    let finished = PluginFinished {
-        transcript_id: dictation.transcript_id,
-        plugin_id: manifest.id,
-        plugin_name: manifest.name,
-        card,
-        error,
-    };
-    let _ = app.emit("plugin-finished", &finished);
-    finished
+    app.state::<Tips>().show(&card, display_time(&card));
+    true
 }
 
-/// How long the pop-up stays up after the plugins finished: long enough to read
-/// a lesson, short for "all good" or nothing.
-pub fn display_time(finished: &[PluginFinished]) -> Duration {
-    let millis = finished
-        .iter()
-        .map(|result| match (&result.card, &result.error) {
-            (Some(card), _) if card.tone == Tone::Tip => reading_time(card),
-            (Some(_), _) => 2_500,
-            (None, Some(_)) => 4_000,
-            (None, None) => 400,
-        })
-        .max()
-        .unwrap_or(400);
-    Duration::from_millis(millis)
-}
-
-fn reading_time(card: &Card) -> u64 {
+/// Long enough to glance at the card, short enough not to linger.
+pub fn display_time(card: &Card) -> Duration {
     let chars: usize = card
         .blocks
         .iter()
@@ -261,9 +206,8 @@ fn reading_time(card: &Card) -> u64 {
             Block::Change { before, after } => before.chars().count() + after.chars().count(),
         })
         .sum();
-    (4_000 + 60 * chars as u64).clamp(6_000, 14_000)
+    Duration::from_millis((3_000 + 50 * chars as u64).clamp(4_000, 7_000))
 }
-
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -352,42 +296,21 @@ mod tests {
         assert!(host.applicable(&ready, &dictation("skip")).is_empty());
     }
 
-    fn finished(card: Option<Card>, error: Option<&str>) -> PluginFinished {
-        PluginFinished {
-            transcript_id: 1,
-            plugin_id: "fake",
-            plugin_name: "Fake",
-            card,
-            error: error.map(Into::into),
-        }
-    }
-
     #[test]
-    fn keeps_lessons_up_long_enough_to_read() {
-        let natural = Card {
-            tone: Tone::Success,
-            blocks: vec![Block::Text {
-                text: "Sounds natural".into(),
-            }],
+    fn shows_cards_long_enough_to_glance_at() {
+        let card = |text: &str| Card {
+            tone: crate::plugin_api::Tone::Tip,
+            blocks: vec![
+                Block::Change {
+                    before: "simple".into(),
+                    after: "casual".into(),
+                },
+                Block::Text { text: text.into() },
+            ],
         };
-        let short = Card {
-            tone: Tone::Tip,
-            blocks: vec![Block::Change {
-                before: "goes".into(),
-                after: "go".into(),
-            }],
-        };
-        let long = Card {
-            tone: Tone::Tip,
-            blocks: vec![Block::Text {
-                text: "x".repeat(500),
-            }],
-        };
-        let seconds = |results: &[PluginFinished]| display_time(results).as_secs_f64();
-        assert_eq!(seconds(&[finished(Some(natural), None)]), 2.5);
-        assert_eq!(seconds(&[finished(Some(short), None)]), 6.0);
-        assert_eq!(seconds(&[finished(Some(long), None)]), 14.0);
-        assert_eq!(seconds(&[finished(None, Some("offline"))]), 4.0);
-        assert_eq!(seconds(&[finished(None, None)]), 0.4);
+        let seconds = |card: Card| display_time(&card).as_secs_f64();
+        assert_eq!(seconds(card("")), 4.0);
+        assert_eq!(seconds(card("relaxed and informal")), 4.6);
+        assert_eq!(seconds(card(&"x".repeat(500))), 7.0);
     }
 }
