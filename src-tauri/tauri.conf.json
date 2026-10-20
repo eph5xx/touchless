@@ -51,7 +51,7 @@
         "shadow": false,
         "visible": false,
         "focus": false,
-        "acceptFirstMouse": false,
+        "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true
       }
     ],

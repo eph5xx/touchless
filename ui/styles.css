@@ -1093,3 +1093,15 @@ textarea {
     transform: translateY(8px);
   }
 }
+
+.history-row.flash {
+  animation: history-flash 1.6s ease-out;
+}
+
+@keyframes history-flash {
+  from,
+  30% {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+}
