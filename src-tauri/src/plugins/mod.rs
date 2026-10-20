@@ -1,14 +1,14 @@
 //! Plugin code. Files in this folder may only use `crate::plugin_api` from the
 //! app; the test below keeps that boundary.
 
-mod english_teacher;
+mod vocabulary_coach;
 
 use std::sync::Arc;
 
 use crate::plugin_api::Plugin;
 
 pub fn all() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(english_teacher::EnglishTeacher)]
+    vec![Arc::new(vocabulary_coach::VocabularyCoach)]
 }
 
 #[cfg(test)]

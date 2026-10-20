@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions for the app windows",
-  "windows": ["main", "overlay"],
+  "windows": ["main", "overlay", "tips"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

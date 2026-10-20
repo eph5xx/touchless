@@ -237,7 +237,7 @@ impl Touchless {
     }
 
     /// List Touchless voice dictation transcripts, newest first, with their full
-    /// text, duration and plugin results (such as English Teacher cards).
+    /// text, duration and plugin results (such as Vocabulary Coach cards).
     /// Filter by time with `from` (inclusive) and `to` (exclusive); times without
     /// an offset use the Mac's local timezone. When `next_cursor` is not null,
     /// call again with it as `cursor` and the same `from`/`to` to get older items.
