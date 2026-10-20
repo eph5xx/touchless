@@ -6,7 +6,7 @@ import {
   renderShortcut,
   onToggleIgnored,
 } from "./dictate.js";
-import { initHistory, loadHistory } from "./history.js";
+import { initHistory, loadHistory, focusTranscript } from "./history.js";
 import { loadPlugins } from "./plugins.js";
 import { initMcp, loadMcp } from "./mcp.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
@@ -75,6 +75,7 @@ await listen("toggle-ignored", onToggleIgnored);
 await listen("navigate", ({ payload }) => {
   if (PAGES.includes(payload)) location.hash = `#${payload}`;
 });
+await listen("open-transcript", ({ payload }) => focusTranscript(payload));
 await listen("transcripts-changed", () => {
   if (currentPage() === "history") loadHistory();
 });

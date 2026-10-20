@@ -27,6 +27,8 @@ let searchTimer = null;
 let loadMoreObserver = null;
 let measureFrame = 0;
 const expandedEntries = new Set();
+// A transcript to scroll to and highlight on the next render.
+let pendingFocusId = null;
 
 export function initHistory(shortcut) {
   getShortcut = shortcut;
@@ -55,6 +57,16 @@ export function initHistory(shortcut) {
 
   // Whether a preview is cut off depends on the width it gets.
   new ResizeObserver(scheduleMeasure).observe($("history-list"));
+}
+
+/** Shows one transcript expanded, e.g. after its tip card was clicked. */
+export function focusTranscript(id) {
+  $("history-search").value = "";
+  activeFilter = "all";
+  renderFilters();
+  expandedEntries.add(id);
+  pendingFocusId = id;
+  loadHistory();
 }
 
 function currentQuery() {
@@ -147,11 +159,22 @@ function render(query = currentQuery()) {
   renderCount();
   renderFilters();
   scheduleMeasure();
+  revealPendingFocus();
 
   // Re-observing reports the marker's current position, so another page loads
   // if this one did not fill the window.
   loadMoreObserver.unobserve($("history-more"));
   loadMoreObserver.observe($("history-more"));
+}
+
+function revealPendingFocus() {
+  if (pendingFocusId == null) return;
+  const row = $("history-list").querySelector(`.history-row[data-id="${pendingFocusId}"]`);
+  pendingFocusId = null;
+  if (!row) return;
+  row.scrollIntoView({ block: "center" });
+  row.classList.add("flash");
+  row.addEventListener("animationend", () => row.classList.remove("flash"), { once: true });
 }
 
 function renderCount() {

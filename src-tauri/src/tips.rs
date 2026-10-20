@@ -1,129 +1,184 @@
-//! The card at the top-right of the screen where plugin tips appear. Like the
-//! pill it must never become key or activate Touchless, and clicks pass through.
+//! The cards at the top-right of the screen where plugin tips appear. Like the
+//! pill the window never activates Touchless on its own. It is sized to the
+//! cards, so clicks next to them still reach the app behind; a click on a card
+//! opens that transcript in History.
 
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::{overlay, plugin_api::Card};
 
 const LABEL: &str = "tips";
-const WIDTH: f64 = 360.0;
-/// Room for a few stacked cards; the window is transparent and ignores the mouse.
-const HEIGHT: f64 = 260.0;
 const MARGIN: f64 = 12.0;
-/// Matches the fade-out in tips.css, so the last card finishes fading first.
-const FADE: Duration = Duration::from_millis(250);
+/// How often the pointer is checked while cards are on screen. Hover events
+/// are not reliable in a window of an inactive app.
+const HOVER_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Serialize)]
 struct TipShown<'a> {
     card: &'a Card,
     duration_ms: u64,
+    transcript_id: i64,
+}
+
+/// The window frame in physical pixels.
+#[derive(Clone, Copy)]
+struct Frame {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+impl Frame {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x as f64
+            && y >= self.y as f64
+            && x < self.x as f64 + self.width as f64
+            && y < self.y as f64 + self.height as f64
+    }
+}
+
+/// Where the stack is pinned while it stays on screen.
+#[derive(Clone, Copy)]
+struct Anchor {
+    right: i32,
+    top: i32,
+    scale: f64,
 }
 
 #[derive(Default)]
-struct Visibility {
-    /// Bumped on every show so an earlier scheduled hide does not cut a newer card short.
+struct Placement {
+    /// `None` while hidden.
+    anchor: Option<Anchor>,
+    frame: Option<Frame>,
+    /// Bumped whenever the window appears or hides, which ends the previous hover poll.
     generation: u64,
-    /// When the last card on screen is gone; `None` while hidden.
-    until: Option<Instant>,
 }
 
 pub struct Tips {
     app: AppHandle,
-    visibility: Arc<Mutex<Visibility>>,
+    placement: Arc<Mutex<Placement>>,
 }
 
 impl Tips {
     /// Must run on the main thread (e.g. from `setup`).
     pub fn new(app: &AppHandle) -> Self {
+        #[cfg(target_os = "macos")]
         if let Some(window) = app.get_webview_window(LABEL) {
-            let _ = window.set_ignore_cursor_events(true);
-            #[cfg(target_os = "macos")]
             overlay::configure_native(&window);
         }
         Self {
             app: app.clone(),
-            visibility: Arc::default(),
+            placement: Arc::default(),
         }
     }
 
-    /// Shows `card` for `duration` next to any cards already on screen.
-    pub fn show(&self, card: &Card, duration: Duration) {
+    /// Adds `card` to the stack. The page decides how long it stays and calls
+    /// [`Self::fit`] once the stack has changed.
+    pub fn show(&self, card: &Card, duration: Duration, transcript_id: i64) {
         let _ = self.app.emit_to(
             LABEL,
             "tip",
             TipShown {
                 card,
                 duration_ms: duration.as_millis() as u64,
+                transcript_id,
             },
         );
+    }
 
-        let now = Instant::now();
-        let (token, until, appearing) = {
-            let mut visibility = self.visibility.lock().unwrap();
-            let current = visibility.until.filter(|until| *until > now);
-            let until = current.map_or(now + duration + FADE, |until| {
-                until.max(now + duration + FADE)
-            });
-            visibility.generation += 1;
-            visibility.until = Some(until);
-            (visibility.generation, until, current.is_none())
-        };
-
+    /// Sizes the window to a stack of `width` × `height` logical pixels, keeping
+    /// its top-right corner in place, or hides it when the size is zero.
+    pub fn fit(&self, width: f64, height: f64) {
         let app = self.app.clone();
+        let placement = Arc::clone(&self.placement);
         let _ = self.app.run_on_main_thread(move || {
             let Some(window) = app.get_webview_window(LABEL) else {
                 return;
             };
-            // Only place a fresh stack, so visible cards never jump between screens.
-            if appearing {
-                place_top_right(&app, &window);
-            }
-            overlay::order_front(&window);
-        });
-
-        let visibility = Arc::clone(&self.visibility);
-        let app = self.app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(until.saturating_duration_since(Instant::now()));
-            if visibility.lock().unwrap().generation != token {
+            let mut current = placement.lock().unwrap();
+            if width <= 0.0 || height <= 0.0 {
+                if current.anchor.take().is_some() {
+                    current.frame = None;
+                    current.generation += 1;
+                }
+                overlay::order_out(&window);
                 return;
             }
-            let _ = app.clone().run_on_main_thread(move || {
-                let mut visibility = visibility.lock().unwrap();
-                if visibility.generation != token {
-                    return;
-                }
-                visibility.until = None;
-                if let Some(window) = app.get_webview_window(LABEL) {
-                    overlay::order_out(&window);
-                }
-            });
+
+            // Only place a fresh stack, so visible cards never jump between screens.
+            let appearing = current.anchor.is_none();
+            let anchor = match current.anchor {
+                Some(anchor) => anchor,
+                None => match top_right(&app) {
+                    Some(anchor) => anchor,
+                    None => return,
+                },
+            };
+            let width = (width * anchor.scale).ceil() as u32;
+            let frame = Frame {
+                x: anchor.right - width as i32,
+                y: anchor.top,
+                width,
+                height: (height * anchor.scale).ceil() as u32,
+            };
+            current.anchor = Some(anchor);
+            current.frame = Some(frame);
+            let _ = window.set_size(PhysicalSize::new(frame.width, frame.height));
+            let _ = window.set_position(PhysicalPosition::new(frame.x, frame.y));
+            overlay::order_front(&window);
+
+            if appearing {
+                current.generation += 1;
+                watch_hover(app.clone(), Arc::clone(&placement), current.generation);
+            }
         });
     }
 }
 
-fn place_top_right(app: &AppHandle, window: &WebviewWindow) {
+/// Tells the page whether the pointer is over the cards until the window hides.
+fn watch_hover(app: AppHandle, placement: Arc<Mutex<Placement>>, generation: u64) {
+    std::thread::spawn(move || {
+        let mut hovering = false;
+        loop {
+            std::thread::sleep(HOVER_POLL);
+            let frame = {
+                let placement = placement.lock().unwrap();
+                if placement.generation != generation {
+                    return;
+                }
+                placement.frame
+            };
+            let inside = match (frame, app.cursor_position()) {
+                (Some(frame), Ok(cursor)) => frame.contains(cursor.x, cursor.y),
+                _ => false,
+            };
+            if inside != hovering {
+                hovering = inside;
+                let _ = app.emit_to(LABEL, "tips-hover", hovering);
+            }
+        }
+    });
+}
+
+fn top_right(app: &AppHandle) -> Option<Anchor> {
     let monitor = app
         .cursor_position()
         .ok()
         .and_then(|cursor| app.monitor_from_point(cursor.x, cursor.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let Some(monitor) = monitor else { return };
-
+        .or_else(|| app.primary_monitor().ok().flatten())?;
     let scale = monitor.scale_factor();
-    let width = (WIDTH * scale).round() as u32;
-    let height = (HEIGHT * scale).round() as u32;
     let margin = (MARGIN * scale).round() as i32;
     let area = monitor.work_area();
-    let x = area.position.x + area.size.width as i32 - width as i32 - margin;
-    let y = area.position.y + margin;
-
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.set_size(PhysicalSize::new(width, height));
+    Some(Anchor {
+        right: area.position.x + area.size.width as i32 - margin,
+        top: area.position.y + margin,
+        scale,
+    })
 }

@@ -192,7 +192,8 @@ async fn run_one(
     {
         eprintln!("could not save the {} result: {error}", manifest.name);
     }
-    app.state::<Tips>().show(&card, display_time(&card));
+    app.state::<Tips>()
+        .show(&card, display_time(&card), dictation.transcript_id);
     true
 }
 

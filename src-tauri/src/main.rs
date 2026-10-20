@@ -56,6 +56,17 @@ fn delete_transcript(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), S
 }
 
 #[tauri::command]
+fn fit_tips(tips: State<'_, Tips>, width: f64, height: f64) {
+    tips.fit(width, height);
+}
+
+#[tauri::command]
+fn open_transcript(app: AppHandle, id: i64) {
+    tray::show_main(&app, Some("history"));
+    let _ = app.emit_to("main", "open-transcript", id);
+}
+
+#[tauri::command]
 fn get_settings(settings: State<'_, Settings>) -> SettingsView {
     settings.view()
 }
@@ -258,6 +269,8 @@ fn main() {
             toggle_recording,
             list_transcripts,
             delete_transcript,
+            fit_tips,
+            open_transcript,
             get_settings,
             set_api_key,
             remove_api_key,

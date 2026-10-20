@@ -33,8 +33,12 @@ or a vague, overused word (like good, simple, big, do, make, thing) where a more
 Suggest words the speaker can reuse in daily speech; skip rare, formal or fancy words and changes that are only a matter of taste.
 Before answering, put the replacement into the sentence and check that it says the same thing as the original. If not, set has_tip to false.
 If there is such a word, set has_tip to true. Put the word or shortest phrase in used, copied exactly from the text, \
-and the replacement in better, in the form that fits the sentence. In note, write a fragment of at most 6 words \
-saying why the better word fits, for example \"the usual phrase for contacting someone\". Do not define the word. No full sentence, no quotes.
+and the replacement in better, in the form that fits the sentence.
+In note, say in 3 to 7 words why the better word fits. Always start with \"The usual\" or \"A more precise\" and end with a period. \
+No quotes, no grammar terms, do not define the word. Examples:
+make a photo -> take a photo: The usual verb for photos.
+reach my friends -> reach out to my friends: The usual phrase for contacting someone.
+good food -> delicious food: A more precise word for tasty food.
 If no word is clearly better, set has_tip to false and leave used, better and note empty.";
 
 #[derive(Debug, Deserialize)]
@@ -66,10 +70,29 @@ fn is_english(code: &str) -> bool {
     code == "en" || code == "eng" || code.starts_with("en-") || code.starts_with("en_")
 }
 
+/// Puts a note into one shape however the model phrased it: one line, no
+/// wrapping quotes, a capital first letter and a single closing period.
+fn note(raw: &str) -> String {
+    const QUOTES: &[char] = &['"', '\'', '`', '“', '”', '‘', '’', '«', '»'];
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = text
+        .trim_matches(|c: char| QUOTES.contains(&c) || c.is_whitespace())
+        .trim_end_matches(|c: char| {
+            QUOTES.contains(&c)
+                || c.is_whitespace()
+                || matches!(c, '.' | '!' | '?' | ',' | ';' | ':' | '…')
+        });
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
 fn card(verdict: Verdict) -> Option<Card> {
     let used = verdict.used.trim();
     let better = verdict.better.trim();
-    let note = verdict.note.trim();
+    let note = note(&verdict.note);
     let has_tip = verdict.is_english
         && verdict.has_tip
         && !used.is_empty()
@@ -84,9 +107,7 @@ fn card(verdict: Verdict) -> Option<Card> {
         after: better.to_owned(),
     }];
     if !note.is_empty() {
-        blocks.push(Block::Text {
-            text: note.to_owned(),
-        });
+        blocks.push(Block::Text { text: note });
     }
     Some(Card {
         tone: Tone::Tip,
@@ -192,7 +213,7 @@ mod tests {
             true,
             " simple ",
             " casual ",
-            " relaxed and informal ",
+            " a more precise word for informal talk ",
         ))
         .await
         .unwrap();
@@ -206,7 +227,7 @@ mod tests {
                         after: "casual".into()
                     },
                     Block::Text {
-                        text: "relaxed and informal".into()
+                        text: "A more precise word for informal talk.".into()
                     },
                 ],
             })
@@ -215,11 +236,35 @@ mod tests {
 
     #[tokio::test]
     async fn leaves_out_an_empty_note() {
-        let card = check(verdict(true, true, "simple", "casual", ""))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(card.blocks.len(), 1);
+        for empty in ["", "  ", "\"\"", "."] {
+            let card = check(verdict(true, true, "simple", "casual", empty))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(card.blocks.len(), 1, "{empty:?}");
+        }
+    }
+
+    #[test]
+    fn normalizes_notes_to_one_shape() {
+        for (raw, expected) in [
+            ("The usual verb for photos.", "The usual verb for photos."),
+            ("the usual verb for photos", "The usual verb for photos."),
+            (
+                "  \"The usual verb for photos.\"  ",
+                "The usual verb for photos.",
+            ),
+            (
+                "“a more precise word for tasty food”!",
+                "A more precise word for tasty food.",
+            ),
+            (
+                "The usual phrase\nfor contacting  someone...",
+                "The usual phrase for contacting someone.",
+            ),
+        ] {
+            assert_eq!(note(raw), expected, "{raw:?}");
+        }
     }
 
     #[tokio::test]
