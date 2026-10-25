@@ -1,8 +1,9 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
+    chatgpt::{ChatGpt, ChatGptView},
     db::Db,
     models::{ModelStore, WhisperModel},
     shortcut::Shortcut,
@@ -12,6 +13,7 @@ const PREFERENCES_KEY: &str = "preferences";
 const ENGINE_KEY: &str = "engine";
 const TRANSCRIPTION_KEY: &str = "transcription";
 const SHORTCUT_KEY: &str = "shortcut";
+const OPENAI_METHOD_KEY: &str = "openai_method";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
@@ -58,6 +60,17 @@ pub enum Provider {
     /// The text model plugins use.
     #[serde(rename = "openai")]
     OpenAi,
+}
+
+/// How Touchless pays for OpenAI requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpenAiMethod {
+    #[default]
+    #[serde(rename = "api_key")]
+    ApiKey,
+    /// The user's ChatGPT subscription, through Sign in with ChatGPT.
+    #[serde(rename = "chatgpt")]
+    ChatGpt,
 }
 
 /// Saved API keys; also the JSON stored in the Keychain item.
@@ -332,8 +345,17 @@ pub struct ApiKeysView {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct OpenAiView {
+    method: OpenAiMethod,
+    /// The selected method is set up.
+    ready: bool,
+    chatgpt: ChatGptView,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SettingsView {
     api_keys: ApiKeysView,
+    openai: OpenAiView,
     engine: Engine,
     preferences: Preferences,
     transcription: TranscriptionOptions,
@@ -341,9 +363,12 @@ pub struct SettingsView {
     shortcut_is_default: bool,
 }
 
-/// API keys live in the macOS Keychain; everything else lives in SQLite.
+/// API keys and ChatGPT tokens live in the macOS Keychain; everything else
+/// lives in SQLite.
 pub struct Settings {
     api_keys: Mutex<ApiKeys>,
+    openai_method: Mutex<OpenAiMethod>,
+    chatgpt: Arc<ChatGpt>,
     engine: Mutex<Engine>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
@@ -351,13 +376,15 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn load(db: &Db) -> Self {
-        let api_keys = keychain::load().unwrap_or_else(|error| {
+    pub fn load(db: &Db, chatgpt: Arc<ChatGpt>) -> Self {
+        let api_keys = load_api_keys().unwrap_or_else(|error| {
             eprintln!("could not read API keys from the Keychain: {error}");
             ApiKeys::default()
         });
         Self {
             api_keys: Mutex::new(api_keys),
+            openai_method: Mutex::new(load_json(db, OPENAI_METHOD_KEY)),
+            chatgpt,
             engine: Mutex::new(load_json(db, ENGINE_KEY)),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_transcription(db)),
@@ -372,6 +399,11 @@ impl Settings {
             api_keys: ApiKeysView {
                 elevenlabs: ApiKeyStatus::of(keys.get(Provider::ElevenLabs)),
                 openai: ApiKeyStatus::of(keys.get(Provider::OpenAi)),
+            },
+            openai: OpenAiView {
+                method: self.openai_method(),
+                ready: self.openai_ready(),
+                chatgpt: self.chatgpt.view(),
             },
             engine: self.engine(),
             preferences: self.preferences(),
@@ -401,9 +433,47 @@ impl Settings {
         let mut current = self.api_keys.lock().unwrap();
         let mut keys = current.clone();
         *keys.slot(provider) = next;
-        keychain::save(&keys).map_err(|error| format!("could not update the Keychain: {error}"))?;
+        save_api_keys(&keys).map_err(|error| format!("could not update the Keychain: {error}"))?;
         *current = keys;
         Ok(())
+    }
+
+    pub fn openai_method(&self) -> OpenAiMethod {
+        *self.openai_method.lock().unwrap()
+    }
+
+    pub fn set_openai_method(&self, db: &Db, method: OpenAiMethod) -> Result<(), String> {
+        save_json(db, OPENAI_METHOD_KEY, &method)
+            .map_err(|error| format!("could not save how to connect OpenAI: {error}"))?;
+        *self.openai_method.lock().unwrap() = method;
+        Ok(())
+    }
+
+    /// Whether the selected way to connect OpenAI is set up.
+    pub fn openai_ready(&self) -> bool {
+        match self.openai_method() {
+            OpenAiMethod::ApiKey => self.api_key(Provider::OpenAi).is_some(),
+            OpenAiMethod::ChatGpt => self.chatgpt.signed_in(),
+        }
+    }
+
+    pub fn chatgpt(&self) -> Arc<ChatGpt> {
+        Arc::clone(&self.chatgpt)
+    }
+
+    #[cfg(test)]
+    pub fn for_test(openai_key: Option<&str>, method: OpenAiMethod, chatgpt: ChatGpt) -> Self {
+        let mut api_keys = ApiKeys::default();
+        *api_keys.slot(Provider::OpenAi) = openai_key.map(str::to_owned);
+        Self {
+            api_keys: Mutex::new(api_keys),
+            openai_method: Mutex::new(method),
+            chatgpt: Arc::new(chatgpt),
+            engine: Mutex::default(),
+            preferences: Mutex::default(),
+            transcription: Mutex::default(),
+            shortcut: Mutex::default(),
+        }
     }
 
     pub fn engine(&self) -> Engine {
@@ -517,54 +587,70 @@ fn describe_session(config: &serde_json::Value) -> String {
     parts.join(" · ")
 }
 
-/// The Keychain item holds every API key as one JSON object. Entries for
+/// The Keychain item that holds every API key as one JSON object. Entries for
 /// providers Touchless no longer uses are dropped on the next save.
+const API_KEYS_ACCOUNT: &str = "api-keys";
+
+fn load_api_keys() -> Result<ApiKeys, String> {
+    match keychain::load(API_KEYS_ACCOUNT)? {
+        Some(bytes) => parse_stored_keys(&bytes),
+        None => Ok(ApiKeys::default()),
+    }
+}
+
+fn save_api_keys(keys: &ApiKeys) -> Result<(), String> {
+    if keys.is_empty() {
+        return keychain::delete(API_KEYS_ACCOUNT);
+    }
+    let json = serde_json::to_vec(keys).map_err(|error| error.to_string())?;
+    keychain::save(API_KEYS_ACCOUNT, &json)
+}
+
+/// Generic password items under one service, one per account name.
 #[cfg(target_os = "macos")]
-mod keychain {
+pub mod keychain {
     use security_framework::passwords::{
         delete_generic_password, get_generic_password, set_generic_password,
     };
 
-    use super::ApiKeys;
-
     const SERVICE: &str = "com.touchless.desktop";
-    const ACCOUNT: &str = "api-keys";
     const ITEM_NOT_FOUND: i32 = -25300;
 
-    pub fn load() -> Result<ApiKeys, String> {
-        match get_generic_password(SERVICE, ACCOUNT) {
-            Ok(bytes) => super::parse_stored_keys(&bytes),
-            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(ApiKeys::default()),
+    pub fn load(account: &str) -> Result<Option<Vec<u8>>, String> {
+        match get_generic_password(SERVICE, account) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    pub fn save(keys: &ApiKeys) -> Result<(), String> {
-        if keys.is_empty() {
-            return match delete_generic_password(SERVICE, ACCOUNT) {
-                Err(error) if error.code() != ITEM_NOT_FOUND => Err(error.to_string()),
-                _ => Ok(()),
-            };
+    pub fn save(account: &str, bytes: &[u8]) -> Result<(), String> {
+        set_generic_password(SERVICE, account, bytes).map_err(|error| error.to_string())
+    }
+
+    pub fn delete(account: &str) -> Result<(), String> {
+        match delete_generic_password(SERVICE, account) {
+            Err(error) if error.code() != ITEM_NOT_FOUND => Err(error.to_string()),
+            _ => Ok(()),
         }
-        let json = serde_json::to_vec(keys).map_err(|error| error.to_string())?;
-        set_generic_password(SERVICE, ACCOUNT, &json).map_err(|error| error.to_string())
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-mod keychain {
-    use super::ApiKeys;
-
-    pub fn load() -> Result<ApiKeys, String> {
-        Ok(ApiKeys::default())
+pub mod keychain {
+    pub fn load(_account: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
     }
 
-    pub fn save(_keys: &ApiKeys) -> Result<(), String> {
+    pub fn save(_account: &str, _bytes: &[u8]) -> Result<(), String> {
         Err("secure key storage is only available on macOS".into())
+    }
+
+    pub fn delete(_account: &str) -> Result<(), String> {
+        Ok(())
     }
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_stored_keys(bytes: &[u8]) -> Result<ApiKeys, String> {
     let keys: ApiKeys = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let clean = |key: Option<String>| {
@@ -610,13 +696,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let models = ModelStore::new(dir.path().to_owned());
-        let settings = Settings {
-            api_keys: Mutex::default(),
-            engine: Mutex::default(),
-            preferences: Mutex::default(),
-            transcription: Mutex::default(),
-            shortcut: Mutex::default(),
-        };
+        let settings = Settings::for_test(None, OpenAiMethod::ApiKey, ChatGpt::for_test(false));
         let small = WhisperModel::WhisperSmall;
         assert!(settings.set_engine(&db, small.into(), &models).is_err());
         assert_eq!(settings.engine(), Engine::Elevenlabs);
@@ -631,6 +711,47 @@ mod tests {
             .set_engine(&db, Engine::Elevenlabs, &models)
             .unwrap();
         assert_eq!(settings.engine(), Engine::Elevenlabs);
+    }
+
+    #[test]
+    fn openai_method_defaults_to_api_key_and_round_trips() {
+        assert_eq!(OpenAiMethod::default(), OpenAiMethod::ApiKey);
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(
+            load_json::<OpenAiMethod>(&db, OPENAI_METHOD_KEY),
+            OpenAiMethod::ApiKey
+        );
+        assert_eq!(
+            serde_json::to_string(&OpenAiMethod::ChatGpt).unwrap(),
+            r#""chatgpt""#
+        );
+
+        let settings = Settings::for_test(None, OpenAiMethod::ApiKey, ChatGpt::for_test(false));
+        settings
+            .set_openai_method(&db, OpenAiMethod::ChatGpt)
+            .unwrap();
+        assert_eq!(settings.openai_method(), OpenAiMethod::ChatGpt);
+        assert_eq!(
+            load_json::<OpenAiMethod>(&db, OPENAI_METHOD_KEY),
+            OpenAiMethod::ChatGpt
+        );
+        db.set_setting(OPENAI_METHOD_KEY, r#""carrier_pigeon""#)
+            .unwrap();
+        assert_eq!(
+            load_json::<OpenAiMethod>(&db, OPENAI_METHOD_KEY),
+            OpenAiMethod::ApiKey
+        );
+    }
+
+    #[test]
+    fn openai_is_ready_when_the_selected_method_is_set_up() {
+        let ready = |key: Option<&str>, method, signed_in| {
+            Settings::for_test(key, method, ChatGpt::for_test(signed_in)).openai_ready()
+        };
+        assert!(ready(Some("sk"), OpenAiMethod::ApiKey, false));
+        assert!(!ready(None, OpenAiMethod::ApiKey, true));
+        assert!(ready(None, OpenAiMethod::ChatGpt, true));
+        assert!(!ready(Some("sk"), OpenAiMethod::ChatGpt, false));
     }
 
     #[test]

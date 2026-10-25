@@ -4,7 +4,7 @@ import { $, el, icon, invoke, toast } from "./util.js";
 const DEPENDENCIES = {
   llm: {
     status: "Needs OpenAI",
-    action: "Set up OpenAI",
+    action: "Connect OpenAI",
   },
 };
 

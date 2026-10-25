@@ -12,7 +12,8 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Instrument {
-    /// A text model, reached through [`Tools::llm`]. Needs an OpenAI key.
+    /// A text model, reached through [`Tools::llm`]. Needs OpenAI, connected
+    /// with an API key or a ChatGPT subscription.
     Llm,
 }
 
