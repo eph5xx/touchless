@@ -50,8 +50,13 @@ function dismiss(node) {
   }, FADE_MS);
 }
 
-function show({ card, duration_ms, transcript_id }) {
-  const node = el("section", { className: "tip" }, ...cardBlocks(card));
+function show({ card, duration_ms, transcript_id, hint }) {
+  const node = el(
+    "section",
+    { className: "tip" },
+    hint ? el("div", { className: "tip-hint" }, hint) : null,
+    ...cardBlocks(card),
+  );
   node.addEventListener("click", () => {
     dismiss(node);
     if (transcript_id != null) {

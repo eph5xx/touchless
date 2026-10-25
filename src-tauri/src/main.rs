@@ -365,10 +365,16 @@ fn set_plugin_enabled(
     db: State<'_, Db>,
     host: State<'_, PluginHost>,
     settings: State<'_, Settings>,
+    tips: State<'_, Tips>,
     id: String,
     enabled: bool,
 ) -> Result<Vec<PluginView>, String> {
-    host.set_enabled(&db, &id, enabled)?;
+    if host.set_enabled(&db, &id, enabled)?
+        && let Some((name, card)) = host.example(&id)
+    {
+        let hint = format!("{name} tips will appear here");
+        tips.show_example(&card, plugin_host::EXAMPLE_TIME, &hint);
+    }
     Ok(host.view(&plugin_host::available(&settings)))
 }
 
