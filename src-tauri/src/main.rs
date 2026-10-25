@@ -130,7 +130,7 @@ fn set_openai_method(
     Ok(settings.view())
 }
 
-/// Waits for the browser sign-in; a successful one selects the ChatGPT plan.
+/// Waits for the browser sign-in; a successful one selects the ChatGPT subscription.
 #[tauri::command]
 async fn chatgpt_sign_in(
     app: AppHandle,

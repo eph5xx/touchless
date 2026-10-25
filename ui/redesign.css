@@ -813,6 +813,12 @@ button.chatgpt-button {
   color: #fff;
 }
 
+.chatgpt-logo {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 button.chatgpt-button:hover:not(:disabled) {
   background: #262626;
 }

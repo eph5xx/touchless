@@ -19,16 +19,16 @@ const PROVIDERS = {
   openai: {
     name: "OpenAI",
     description:
-      "Powers Rewrite with local models and plugins like Vocabulary Coach. Connect it with an API key or your ChatGPT plan.",
+      "Powers Rewrite with local models and plugins like Vocabulary Coach.",
   },
 };
 const OPENAI_METHODS = [
   ["api_key", "API key"],
-  ["chatgpt", "ChatGPT plan"],
+  ["chatgpt", "ChatGPT subscription"],
 ];
 const OPENAI_METHOD_HINTS = {
-  api_key: "Billed to your OpenAI account. Your key stays in your Mac's Keychain.",
-  chatgpt: "Requests use the usage included in your ChatGPT plan. Your sign-in stays in your Mac's Keychain.",
+  api_key: "Pay per use on your OpenAI account. Saved in your Keychain.",
+  chatgpt: "Included in your subscription. Saved in your Keychain.",
 };
 const SIGN_IN_CANCELLED = "Sign-in cancelled";
 
@@ -317,7 +317,13 @@ function chatgptControls(chatgpt) {
   }
 
   if (!chatgpt.signed_in) {
-    const signIn = el("button", { className: "chatgpt-button", type: "button" }, "Continue with ChatGPT");
+    const signIn = el(
+      "button",
+      { className: "chatgpt-button", type: "button" },
+      "Continue with",
+      el("img", { src: "assets/chatgpt-logo.svg", alt: "", className: "chatgpt-logo" }),
+      "ChatGPT",
+    );
     signIn.addEventListener("click", signInWithChatGpt);
     return el("div", { className: "api-key-form" }, signIn);
   }
@@ -348,7 +354,7 @@ function chatgptControls(chatgpt) {
       "div",
       { className: "chatgpt-status" },
       el("span", {}, chatgpt.email ? `Signed in as ${chatgpt.email}` : "Signed in"),
-      el("span", { className: "muted" }, "· Using ChatGPT plan"),
+      el("span", { className: "muted" }, "· Using ChatGPT subscription"),
     ),
     el("div", { className: "api-key-form" }, usage, test, signOut),
   );
@@ -378,7 +384,7 @@ async function openUsage() {
   }
 }
 
-/** Shown once, after the first sign-in with ChatGPT plan use. */
+/** Shown once, after the first sign-in with ChatGPT subscription use. */
 function renderWelcome(settings) {
   const dialog = $("chatgpt-welcome");
   if (settings.openai.chatgpt.show_welcome && !welcomeSeen && !dialog.open) dialog.showModal();
@@ -417,7 +423,7 @@ function renderTranscription(settings) {
   const canRewrite = !local || settings.openai.ready;
   const rewrite = canRewrite ? options.rewrite : "off";
   const openAiCost =
-    settings.openai.method === "chatgpt" ? "Uses your ChatGPT plan." : "Uses your OpenAI key.";
+    settings.openai.method === "chatgpt" ? "Uses your ChatGPT subscription." : "Uses your OpenAI key.";
   $("rewrite").disabled = !canRewrite;
   $("rewrite").value = rewrite;
   $("rewrite-hint").textContent = !canRewrite

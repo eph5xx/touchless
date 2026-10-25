@@ -1,4 +1,4 @@
-//! Sign in with ChatGPT, so OpenAI requests can use the user's ChatGPT plan
+//! Sign in with ChatGPT, so OpenAI requests can use the user's ChatGPT subscription
 //! instead of an API key. Follows OpenAI's flow for open-source apps: the
 //! first sign-in registers Touchless as a client, every sign-in uses PKCE with
 //! a loopback callback, and the session renews itself with rotating refresh
@@ -43,7 +43,7 @@ const RESOURCE: &str = "https://api.openai.com/v1";
 const REGISTRATION_CLIENT: &str = "dynamic_agent_client";
 const AGENT_NAME: &str = "Touchless";
 const SCOPE: &str = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
-/// Without this scope the tokens cannot use the ChatGPT plan.
+/// Without this scope the tokens cannot use the ChatGPT subscription.
 const PLAN_SCOPE: &str = "chatgpt.tokens.use.direct";
 const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_PATH: &str = "/auth/callback";
@@ -68,7 +68,7 @@ const UNUSABLE_REFRESH_CODES: &[&str] = &[
 
 pub const SIGN_IN_AGAIN: &str = "Sign in with ChatGPT again in Settings → Services.";
 pub const NOT_SIGNED_IN: &str = "Sign in with ChatGPT in Settings → Services.";
-pub const USAGE_LIMIT: &str = "You've reached the usage limit for Touchless on your ChatGPT plan. Manage usage in ChatGPT settings.";
+pub const USAGE_LIMIT: &str = "You've reached the usage limit for Touchless on your ChatGPT subscription. Manage usage in ChatGPT settings.";
 pub const CANCELLED: &str = "Sign-in cancelled";
 
 /// What stays in SQLite, even after signing out: none of it is secret.
@@ -102,7 +102,7 @@ struct Session {
 pub struct ChatGptView {
     signed_in: bool,
     email: Option<String>,
-    /// The one-time "You're using your ChatGPT plan" message.
+    /// The one-time "You're using your ChatGPT subscription" message.
     show_welcome: bool,
 }
 
@@ -281,7 +281,7 @@ impl ChatGpt {
 
         let scopes = split_scopes(tokens.scope.as_deref().unwrap_or_default());
         if !scopes.iter().any(|scope| scope == PLAN_SCOPE) {
-            return Err("Touchless wasn't allowed to use your ChatGPT plan. Sign in again and allow it, or use an API key.".into());
+            return Err("Touchless wasn't allowed to use your ChatGPT subscription. Sign in again and allow it, or use an API key.".into());
         }
         let refresh_token = tokens
             .refresh_token
@@ -548,7 +548,7 @@ fn parse_callback(
     }
     if let Some(error) = param("error") {
         return Err(if error == "access_denied" {
-            "You didn't allow Touchless to use your ChatGPT plan.".into()
+            "You didn't allow Touchless to use your ChatGPT subscription.".into()
         } else {
             let detail = param("error_description").unwrap_or(error);
             format!("ChatGPT sign-in failed: {detail}")

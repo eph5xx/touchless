@@ -68,7 +68,7 @@ pub enum OpenAiMethod {
     #[default]
     #[serde(rename = "api_key")]
     ApiKey,
-    /// The user's ChatGPT plan, through Sign in with ChatGPT.
+    /// The user's ChatGPT subscription, through Sign in with ChatGPT.
     #[serde(rename = "chatgpt")]
     ChatGpt,
 }

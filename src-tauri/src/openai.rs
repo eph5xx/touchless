@@ -1,5 +1,5 @@
 //! OpenAI, the text model the app lends to plugins as [`Llm`]. Requests are
-//! paid for with an API key or with the user's ChatGPT plan.
+//! paid for with an API key or with the user's ChatGPT subscription.
 
 use std::{sync::Arc, time::Duration};
 
@@ -163,7 +163,7 @@ struct ApiError {
 
 impl ApiError {
     /// Reads `{"error": {...}}` bodies and the `{"detail": "..."}` bodies the
-    /// ChatGPT plan route returns before a response starts.
+    /// ChatGPT subscription route returns before a response starts.
     fn from_body(status: Option<u16>, body: &Value) -> Self {
         if body["error"].is_object() {
             return Self {
@@ -196,13 +196,13 @@ fn describe_error(chatgpt: bool, error: &ApiError) -> String {
     match error.code.as_deref() {
         Some(USAGE_LIMIT_CODE) => return chatgpt::USAGE_LIMIT.into(),
         Some("subscription_sharing_user_not_eligible") => {
-            return "Your ChatGPT plan can't be used in Touchless. Use an OpenAI API key instead."
+            return "Your ChatGPT subscription can't be used in Touchless. Use an OpenAI API key instead."
                 .into();
         }
         Some(
             "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable",
         ) => {
-            return "ChatGPT plan usage is unavailable right now. Try again later.".into();
+            return "ChatGPT subscription usage is unavailable right now. Try again later.".into();
         }
         Some("subscription_sharing_invalid_user") => {
             return format!(
@@ -212,8 +212,10 @@ fn describe_error(chatgpt: bool, error: &ApiError) -> String {
         }
         Some("subscription_sharing_unsupported_capability") => {
             return match &error.param {
-                Some(param) => format!("Your ChatGPT plan doesn't support this request ({param})"),
-                None => "Your ChatGPT plan doesn't support this request".into(),
+                Some(param) => {
+                    format!("Your ChatGPT subscription doesn't support this request ({param})")
+                }
+                None => "Your ChatGPT subscription doesn't support this request".into(),
             };
         }
         _ => {}
@@ -583,7 +585,7 @@ mod tests {
         );
         assert_eq!(
             describe_error(true, &standard),
-            "Your ChatGPT plan doesn't support this request (reasoning)"
+            "Your ChatGPT subscription doesn't support this request (reasoning)"
         );
 
         let plain = ApiError::from_body(Some(500), &json!({ "error": { "message": "boom" } }));
