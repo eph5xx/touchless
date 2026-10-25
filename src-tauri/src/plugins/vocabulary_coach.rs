@@ -147,6 +147,21 @@ impl Plugin for VocabularyCoach {
             Ok(card(verdict))
         })
     }
+
+    fn example(&self) -> Option<Card> {
+        Some(Card {
+            tone: Tone::Tip,
+            blocks: vec![
+                Block::Change {
+                    before: "make a photo".into(),
+                    after: "take a photo".into(),
+                },
+                Block::Text {
+                    text: "The usual verb for photos.".into(),
+                },
+            ],
+        })
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +280,17 @@ mod tests {
         ] {
             assert_eq!(note(raw), expected, "{raw:?}");
         }
+    }
+
+    #[test]
+    fn example_looks_like_a_real_tip() {
+        let card = VocabularyCoach.example().unwrap();
+        assert_eq!(card.tone, Tone::Tip);
+        assert!(matches!(card.blocks[0], Block::Change { .. }));
+        let Block::Text { text } = &card.blocks[1] else {
+            panic!("the example has no note");
+        };
+        assert_eq!(&note(text), text);
     }
 
     #[tokio::test]

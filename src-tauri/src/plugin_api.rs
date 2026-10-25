@@ -94,4 +94,10 @@ pub trait Plugin: Send + Sync {
         dictation: &'a Dictation,
         tools: &'a Tools<'a>,
     ) -> BoxFuture<'a, Result<Option<Card>, String>>;
+
+    /// A sample card shown at the top-right when the plugin is turned on, so
+    /// people see where its cards will appear. Never saved to history.
+    fn example(&self) -> Option<Card> {
+        None
+    }
 }

@@ -21,6 +21,8 @@ use crate::{
 
 const PLUGINS_KEY: &str = "plugins";
 const PLUGIN_TIMEOUT: Duration = Duration::from_secs(25);
+/// A little longer than real cards, since the example is new to the reader.
+pub const EXAMPLE_TIME: Duration = Duration::from_secs(8);
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -69,8 +71,9 @@ impl PluginHost {
             .collect()
     }
 
-    pub fn set_enabled(&self, db: &Db, id: &str, enabled: bool) -> Result<(), String> {
-        if !self.plugins.iter().any(|plugin| plugin.manifest().id == id) {
+    /// Returns whether the plugin was just turned on.
+    pub fn set_enabled(&self, db: &Db, id: &str, enabled: bool) -> Result<bool, String> {
+        if self.find(id).is_none() {
             return Err(format!("there is no plugin \"{id}\""));
         }
         let mut current = self.enabled.lock().unwrap();
@@ -88,8 +91,21 @@ impl PluginHost {
             },
         )
         .map_err(|error| format!("could not save plugins: {error}"))?;
+        let turned_on = enabled && !current.contains(id);
         *current = next;
-        Ok(())
+        Ok(turned_on)
+    }
+
+    /// The plugin's name and sample card, if it has one.
+    pub fn example(&self, id: &str) -> Option<(&'static str, Card)> {
+        let plugin = self.find(id)?;
+        Some((plugin.manifest().name, plugin.example()?))
+    }
+
+    fn find(&self, id: &str) -> Option<&Arc<dyn Plugin>> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.manifest().id == id)
     }
 
     /// Enabled plugins whose instruments are set up and that want this dictation.
@@ -263,10 +279,11 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         assert!(!host(&db).view(&[])[0].enabled);
 
-        host(&db).set_enabled(&db, "fake", true).unwrap();
+        assert!(host(&db).set_enabled(&db, "fake", true).unwrap());
         assert!(host(&db).view(&[])[0].enabled);
+        assert!(!host(&db).set_enabled(&db, "fake", true).unwrap());
 
-        host(&db).set_enabled(&db, "fake", false).unwrap();
+        assert!(!host(&db).set_enabled(&db, "fake", false).unwrap());
         assert!(!host(&db).view(&[])[0].enabled);
 
         assert!(host(&db).set_enabled(&db, "nope", true).is_err());

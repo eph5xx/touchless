@@ -23,7 +23,10 @@ const HOVER_POLL: Duration = Duration::from_millis(50);
 struct TipShown<'a> {
     card: &'a Card,
     duration_ms: u64,
-    transcript_id: i64,
+    /// `None` for cards that belong to no dictation, such as examples.
+    transcript_id: Option<i64>,
+    /// A caption above the card.
+    hint: Option<&'a str>,
 }
 
 /// The window frame in physical pixels.
@@ -82,15 +85,26 @@ impl Tips {
     /// Adds `card` to the stack. The page decides how long it stays and calls
     /// [`Self::fit`] once the stack has changed.
     pub fn show(&self, card: &Card, duration: Duration, transcript_id: i64) {
-        let _ = self.app.emit_to(
-            LABEL,
-            "tip",
-            TipShown {
-                card,
-                duration_ms: duration.as_millis() as u64,
-                transcript_id,
-            },
-        );
+        self.emit(TipShown {
+            card,
+            duration_ms: duration.as_millis() as u64,
+            transcript_id: Some(transcript_id),
+            hint: None,
+        });
+    }
+
+    /// Adds a sample card with `hint` above it; clicking it only dismisses it.
+    pub fn show_example(&self, card: &Card, duration: Duration, hint: &str) {
+        self.emit(TipShown {
+            card,
+            duration_ms: duration.as_millis() as u64,
+            transcript_id: None,
+            hint: Some(hint),
+        });
+    }
+
+    fn emit(&self, tip: TipShown<'_>) {
+        let _ = self.app.emit_to(LABEL, "tip", tip);
     }
 
     /// Sizes the window to a stack of `width` × `height` logical pixels, keeping
