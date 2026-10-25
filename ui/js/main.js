@@ -10,7 +10,7 @@ import { initHistory, loadHistory, focusTranscript } from "./history.js";
 import { loadPlugins } from "./plugins.js";
 import { initMcp, loadMcp } from "./mcp.js";
 import { initSettings, renderSettings, renderPermissions } from "./settings.js";
-import { initModels, renderModels } from "./models.js";
+import { initModels, renderModels, refreshExternalModels } from "./models.js";
 
 const PAGES = ["dictate", "history", "plugins", "mcp", "settings"];
 const DELIVERY_MESSAGES = {
@@ -19,7 +19,14 @@ const DELIVERY_MESSAGES = {
   saved: "Saved to history",
 };
 
-const app = { recorder: null, settings: null, permissions: null, models: null, whisper: null };
+const app = {
+  recorder: null,
+  settings: null,
+  permissions: null,
+  models: null,
+  whisper: null,
+  external: null,
+};
 let deliveryTimer = null;
 
 function currentPage() {
@@ -63,9 +70,10 @@ await initModels({
     renderModels(settings);
     renderCallouts(app);
   },
-  onState: ({ models, whisper }) => {
+  onState: ({ models, whisper, external }) => {
     app.models = models;
     app.whisper = whisper;
+    app.external = external;
     renderCallouts(app);
   },
 });
@@ -73,9 +81,11 @@ await initModels({
 window.addEventListener("hashchange", () => showPage(currentPage()));
 // Permissions are granted in System Settings, so re-check when the user comes back.
 window.addEventListener("focus", refreshPermissions);
-// Apps may have been installed or reconfigured while Touchless was in the background.
+// Apps may have been installed or reconfigured while Touchless was in the background,
+// and may have moved or deleted model files Touchless uses.
 window.addEventListener("focus", () => {
   if (currentPage() === "mcp") loadMcp();
+  refreshExternalModels();
 });
 
 await listen("recorder-state", (event) => {

@@ -657,6 +657,60 @@ button.prompt-chip:hover:not(:disabled) svg {
   line-height: 1.4;
 }
 
+.model-description {
+  overflow-wrap: anywhere;
+}
+
+.models-custom {
+  margin-top: 7px;
+}
+
+.models-custom-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.models-custom-body > .model-description {
+  margin: 0 3px 3px;
+}
+
+.models-custom summary {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.models-custom summary::-webkit-details-marker {
+  display: none;
+}
+
+.models-custom summary:hover {
+  color: var(--text);
+}
+
+.models-custom-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.15s;
+}
+
+.models-custom[open] .models-custom-icon {
+  transform: rotate(90deg);
+}
+
+.model-choose {
+  align-self: flex-start;
+}
+
 .models-note {
   margin-top: 12px;
   padding: 0 3px;

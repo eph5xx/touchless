@@ -1,4 +1,4 @@
-import { $, el, invoke, listen, openSettingsTab, toast } from "./util.js";
+import { $, el, icon, invoke, listen, openSettingsTab, toast } from "./util.js";
 
 const ELEVENLABS = "elevenlabs";
 const DESCRIPTIONS = {
@@ -8,6 +8,10 @@ const DESCRIPTIONS = {
 };
 
 let models = [];
+/** Model files from other apps, which the user picked. */
+let external = [];
+/** Whether the user opened or closed the custom model section; `null` until they do. */
+let customOpen = null;
 let whisper = { state: "unloaded" };
 let settings = null;
 let onSettings = () => {};
@@ -16,10 +20,19 @@ let onState = () => {};
 let confirmingDelete = null;
 let confirmTimer = null;
 
+/** The id of the selected engine: a built-in id, or the path of an external file. */
+export function engineId(engine) {
+  return typeof engine === "string" ? engine : (engine?.external ?? null);
+}
+
 export async function initModels(handlers) {
   ({ onSettings, onState } = handlers);
   await listen("models-changed", ({ payload }) => {
     models = payload;
+    changed();
+  });
+  await listen("external-models-changed", ({ payload }) => {
+    external = payload;
     changed();
   });
   await listen("model-download-progress", ({ payload }) => {
@@ -36,7 +49,17 @@ export async function initModels(handlers) {
     whisper = payload;
     changed();
   });
-  [models, whisper] = await Promise.all([invoke("list_models"), invoke("get_whisper_status")]);
+  [models, external, whisper] = await Promise.all([
+    invoke("list_models"),
+    invoke("list_external_models"),
+    invoke("get_whisper_status"),
+  ]);
+  changed();
+}
+
+/** Re-checks the external files, which other apps may have moved or deleted. */
+export async function refreshExternalModels() {
+  external = await invoke("list_external_models");
   changed();
 }
 
@@ -46,17 +69,42 @@ export function renderModels(next) {
 }
 
 export function modelsState() {
-  return { models, whisper };
+  return { models, whisper, external };
 }
 
 function changed() {
   render();
-  onState({ models, whisper });
+  onState({ models, whisper, external });
 }
 
 function render() {
   if (!settings) return;
-  $("models-list").replaceChildren(elevenLabsCard(), ...models.map(whisperCard));
+  $("models-list").replaceChildren(elevenLabsCard(), ...models.map(whisperCard), customModels());
+}
+
+/** Picked whisper.cpp files, folded away until the user opens it or has picked one. */
+function customModels() {
+  return el(
+    "details",
+    {
+      className: "models-custom",
+      open: customOpen ?? external.length > 0,
+      ontoggle: (event) => (customOpen = event.currentTarget.open),
+    },
+    el("summary", {}, icon("chevron-right", "models-custom-icon"), "Use your own whisper.cpp model"),
+    el(
+      "div",
+      { className: "models-custom-body" },
+      el(
+        "p",
+        { className: "model-description" },
+        "Pick a ggml .bin file, such as one Handy downloaded. Core ML (WhisperKit) and ONNX models " +
+          "(Moonshine, Parakeet) won't work. Touchless reads the file where it is and never changes or deletes it.",
+      ),
+      ...external.map(externalCard),
+      button("secondary small model-choose", "Choose .bin file…", (event) => chooseFile(event.currentTarget)),
+    ),
+  );
 }
 
 function elevenLabsCard() {
@@ -76,7 +124,7 @@ function elevenLabsCard() {
 }
 
 function whisperCard(model) {
-  const selected = settings.engine === model.id;
+  const selected = engineId(settings.engine) === model.id;
   const description = `${formatBytes(model.size)} · ${DESCRIPTIONS[model.id] ?? ""}`;
   const actions = [];
   let status = null;
@@ -108,6 +156,31 @@ function whisperCard(model) {
   return node;
 }
 
+function externalCard(model) {
+  const selected = engineId(settings.engine) === model.id;
+  const description = [model.label, model.size != null && formatBytes(model.size), model.path]
+    .filter(Boolean)
+    .join(" · ");
+  const status = [
+    model.english_only && el("span", { className: "badge" }, "English only"),
+    model.error
+      ? el("span", { className: "badge warning", title: model.error }, model.missing ? "Missing" : "Can't use")
+      : selected && loadState(model),
+  ];
+  return card({
+    name: model.name,
+    description,
+    selected,
+    status,
+    actions: [
+      !selected &&
+        !model.error &&
+        button("secondary small", "Use", (event) => useEngine(event.currentTarget, { external: model.id })),
+      button("ghost small", "Remove", (event) => removeExternal(event.currentTarget, model)),
+    ],
+  });
+}
+
 /** The badge for the selected local model: loading, failed or ready. */
 function loadState(model) {
   if (whisper.model === model.id && whisper.state === "loading") {
@@ -135,12 +208,12 @@ function card({ name, description, selected, status, actions, extra }) {
       el(
         "div",
         { className: "model-actions" },
-        status,
+        ...[status].flat(),
         selected && el("span", { className: "badge success" }, "In use"),
         ...actions.filter(Boolean),
       ),
     ),
-    selected && whisper.state === "failed" && whisper.model === settings.engine
+    selected && whisper.state === "failed" && whisper.model === engineId(settings.engine)
       ? el("p", { className: "model-error" }, whisper.error)
       : null,
     extra,
@@ -181,6 +254,30 @@ async function useEngine(node, engine) {
   }
 }
 
+async function chooseFile(node) {
+  node.disabled = true;
+  try {
+    const next = await invoke("add_external_model");
+    if (next) onSettings(next);
+  } catch (error) {
+    toast(String(error), { error: true, duration: 5000 });
+  } finally {
+    node.disabled = false;
+  }
+}
+
+async function removeExternal(node, model) {
+  node.disabled = true;
+  try {
+    const inUse = engineId(settings.engine) === model.id;
+    onSettings(await invoke("remove_external_model", { path: model.id }));
+    toast(inUse ? `${model.name} removed. Switched to ElevenLabs.` : `${model.name} removed`);
+  } catch (error) {
+    toast(String(error), { error: true, duration: 4000 });
+    node.disabled = false;
+  }
+}
+
 function askToDelete(model) {
   confirmingDelete = model.id;
   clearTimeout(confirmTimer);
@@ -196,7 +293,7 @@ async function remove(node, model) {
   clearTimeout(confirmTimer);
   node.disabled = true;
   try {
-    const inUse = settings.engine === model.id;
+    const inUse = engineId(settings.engine) === model.id;
     onSettings(await invoke("delete_model", { model: model.id }));
     toast(inUse ? `${model.name} deleted. Switched to ElevenLabs.` : `${model.name} deleted`);
   } catch (error) {

@@ -11,9 +11,10 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     db::Db,
     elevenlabs::{self, ElevenLabs, TranscriptEvent},
+    external,
     hotkey::HotkeyStatus,
     microphone::Microphone,
-    models::{ModelStore, WhisperModel},
+    models::{LocalModel, ModelStore},
     openai::OpenAi,
     overlay::Overlay,
     paste::{self, Delivery},
@@ -311,7 +312,7 @@ impl Recorder {
     async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
         let settings = self.app.state::<Settings>();
         let options = settings.transcription();
-        match settings.engine().whisper() {
+        match settings.engine().local() {
             None => self.record_elevenlabs(stop, options).await,
             Some(model) => self.record_whisper(stop, model, options).await,
         }
@@ -350,21 +351,33 @@ impl Recorder {
     async fn record_whisper(
         self: &Arc<Self>,
         stop: std_mpsc::Receiver<()>,
-        model: WhisperModel,
+        model: LocalModel,
         options: TranscriptionOptions,
     ) -> Result<()> {
-        let path = {
-            let models = self.app.state::<ModelStore>();
-            if !models.is_downloaded(model) {
-                return Err(format!("Download {} in Settings → Models.", model.name()).into());
+        let path = match &model {
+            LocalModel::Builtin(builtin) => {
+                let models = self.app.state::<ModelStore>();
+                if !models.is_downloaded(*builtin) {
+                    return Err(format!("Download {} in Settings → Models.", builtin.name()).into());
+                }
+                models.path(*builtin)
             }
-            models.path(model)
+            LocalModel::External(path) => {
+                if !path.is_file() {
+                    return Err(format!(
+                        "Touchless can't find {}. Choose another model in Settings → Models.",
+                        external::file_name(path)
+                    )
+                    .into());
+                }
+                path.clone()
+            }
         };
 
         let (sample_rate, mut audio_rx) = open_microphone(stop).await?;
         // The microphone is already buffering, so nothing is lost while the model loads.
         let whisper = Arc::clone(self.app.state::<Arc<LocalWhisper>>().inner());
-        let context = whisper.ready(model, path).await?;
+        let context = whisper.ready(model.clone(), path).await?;
         self.update(|snapshot| {
             if snapshot.status == Status::Connecting {
                 snapshot.status = Status::Listening;

@@ -1,6 +1,7 @@
 mod chatgpt;
 mod db;
 mod elevenlabs;
+mod external;
 mod hotkey;
 mod mcp_clients;
 mod microphone;
@@ -20,13 +21,14 @@ mod tips;
 mod tray;
 mod whisper;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use chatgpt::ChatGpt;
 use db::{Db, HistoryPage, HistoryQuery};
+use external::ExternalModelView;
 use hotkey::Hotkey;
 use mcp_clients::{ClientId, McpView};
-use models::{ModelStore, ModelView, WhisperModel};
+use models::{LocalModel, ModelStore, ModelView, WhisperModel};
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use plugin_host::{PluginHost, PluginView};
@@ -38,6 +40,7 @@ use settings::{
 use shortcut::Shortcut;
 use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_dialog::DialogExt;
 use tips::Tips;
 use whisper::{LocalWhisper, WhisperStatus};
 
@@ -217,9 +220,10 @@ fn download_model(
 ) -> Result<Vec<ModelView>, String> {
     models.download(&app, model, move |app| {
         // A model selected before its file was there loads once it arrives.
-        if app.state::<Settings>().engine().whisper() == Some(model) {
+        let local = LocalModel::Builtin(model);
+        if app.state::<Settings>().engine().local() == Some(local.clone()) {
             let path = app.state::<ModelStore>().path(model);
-            app.state::<Arc<LocalWhisper>>().load(model, path);
+            app.state::<Arc<LocalWhisper>>().load(local, path);
         }
     })?;
     Ok(models.view())
@@ -240,7 +244,7 @@ fn delete_model(
     whisper: State<'_, Arc<LocalWhisper>>,
     model: WhisperModel,
 ) -> Result<SettingsView, String> {
-    if settings.engine().whisper() == Some(model) {
+    if settings.engine().local() == Some(LocalModel::Builtin(model)) {
         settings.set_engine(&db, Engine::Elevenlabs, &models)?;
         whisper.unload();
     }
@@ -257,15 +261,97 @@ fn set_engine(
     whisper: State<'_, Arc<LocalWhisper>>,
     engine: Engine,
 ) -> Result<SettingsView, String> {
+    apply_engine(&db, &settings, &models, &whisper, engine)?;
+    Ok(settings.view())
+}
+
+/// Saves `engine` and loads its model, or unloads Whisper for ElevenLabs.
+fn apply_engine(
+    db: &Db,
+    settings: &Settings,
+    models: &ModelStore,
+    whisper: &Arc<LocalWhisper>,
+    engine: Engine,
+) -> Result<(), String> {
     let changed = settings.engine() != engine;
-    settings.set_engine(&db, engine, &models)?;
-    match engine.whisper() {
+    settings.set_engine(db, engine.clone(), models)?;
+    match engine.local() {
         Some(model) if changed || !matches!(whisper.status(), WhisperStatus::Ready { .. }) => {
-            whisper.load(model, models.path(model));
+            let path = models.local_path(&model);
+            whisper.load(model, path);
         }
         Some(_) => {}
         None => whisper.unload(),
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_external_models(settings: State<'_, Settings>) -> Vec<ExternalModelView> {
+    external::views(&settings.external_models())
+}
+
+fn external_models_changed(app: &AppHandle, settings: &Settings) {
+    let _ = app.emit(
+        "external-models-changed",
+        external::views(&settings.external_models()),
+    );
+}
+
+/// Lets the user pick a whisper.cpp file, then adds and selects it.
+/// Returns `None` when the user cancels.
+#[tauri::command]
+async fn add_external_model(
+    app: AppHandle,
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    models: State<'_, ModelStore>,
+    whisper: State<'_, Arc<LocalWhisper>>,
+) -> Result<Option<SettingsView>, String> {
+    let (picked, chosen) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Choose a whisper.cpp model")
+        .add_filter("whisper.cpp model", &["bin"]);
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    if let Some(folder) = external::suggested_folder() {
+        dialog = dialog.set_directory(folder);
+    }
+    dialog.pick_file(move |file| {
+        let _ = picked.send(file);
+    });
+    let Some(file) = chosen.await.ok().flatten() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|error| error.to_string())?;
+
+    external::inspect(&path)?;
+    settings.add_external_model(&db, path.clone())?;
+    external_models_changed(&app, &settings);
+    apply_engine(&db, &settings, &models, &whisper, Engine::External(path))?;
+    Ok(Some(settings.view()))
+}
+
+/// Forgets a picked model file without touching the file. Removing the
+/// model in use switches back to ElevenLabs.
+#[tauri::command]
+fn remove_external_model(
+    app: AppHandle,
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    models: State<'_, ModelStore>,
+    whisper: State<'_, Arc<LocalWhisper>>,
+    path: PathBuf,
+) -> Result<SettingsView, String> {
+    if settings.engine() == Engine::External(path.clone()) {
+        settings.set_engine(&db, Engine::Elevenlabs, &models)?;
+        whisper.unload();
+    }
+    settings.remove_external_model(&db, &path)?;
+    external_models_changed(&app, &settings);
     Ok(settings.view())
 }
 
@@ -427,6 +513,7 @@ fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -452,6 +539,9 @@ fn main() {
             cancel_model_download,
             delete_model,
             set_engine,
+            list_external_models,
+            add_external_model,
+            remove_external_model,
             list_plugins,
             set_plugin_enabled,
             update_transcription,
@@ -481,10 +571,15 @@ fn main() {
 
             let models = ModelStore::new(data_dir.join("models"));
             let whisper = LocalWhisper::new(app.handle().clone());
-            if let Some(model) = settings.engine().whisper()
-                && models.is_downloaded(model)
+            let available = |model: &LocalModel| match model {
+                LocalModel::Builtin(model) => models.is_downloaded(*model),
+                LocalModel::External(path) => path.is_file(),
+            };
+            if let Some(model) = settings.engine().local()
+                && available(&model)
             {
-                whisper.load(model, models.path(model));
+                let path = models.local_path(&model);
+                whisper.load(model, path);
             }
             app.manage(models);
             app.manage(whisper);

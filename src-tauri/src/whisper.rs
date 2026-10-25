@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::watch;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::{models::WhisperModel, settings::TranscriptionOptions};
+use crate::{models::LocalModel, settings::TranscriptionOptions};
 
 pub const SAMPLE_RATE: u32 = 16_000;
 /// whisper.cpp's default beam width.
@@ -166,13 +166,13 @@ fn initial_prompt(options: &TranscriptionOptions) -> Option<String> {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum WhisperStatus {
     Unloaded,
-    Loading { model: WhisperModel },
-    Ready { model: WhisperModel },
-    Failed { model: WhisperModel, error: String },
+    Loading { model: LocalModel },
+    Ready { model: LocalModel },
+    Failed { model: LocalModel, error: String },
 }
 
 struct Loaded {
-    model: WhisperModel,
+    model: LocalModel,
     context: Arc<WhisperContext>,
 }
 
@@ -220,7 +220,7 @@ impl LocalWhisper {
     }
 
     /// Loads `model` in the background, replacing the loaded one.
-    pub fn load(self: &Arc<Self>, model: WhisperModel, path: PathBuf) {
+    pub fn load(self: &Arc<Self>, model: LocalModel, path: PathBuf) {
         let generation = {
             let mut inner = self.inner.lock().unwrap();
             inner.generation += 1;
@@ -228,7 +228,9 @@ impl LocalWhisper {
             inner.loaded = None;
             inner.generation
         };
-        self.set_status(WhisperStatus::Loading { model });
+        self.set_status(WhisperStatus::Loading {
+            model: model.clone(),
+        });
 
         let whisper = Arc::clone(self);
         tauri::async_runtime::spawn_blocking(move || {
@@ -242,7 +244,7 @@ impl LocalWhisper {
             let status = match result {
                 Ok(context) => {
                     inner.loaded = Some(Loaded {
-                        model,
+                        model: model.clone(),
                         context: Arc::new(context),
                     });
                     WhisperStatus::Ready { model }
@@ -269,7 +271,7 @@ impl LocalWhisper {
     /// Waits until `model` is loaded, starting the load if another model or none is.
     pub async fn ready(
         self: &Arc<Self>,
-        model: WhisperModel,
+        model: LocalModel,
         path: PathBuf,
     ) -> Result<Arc<WhisperContext>, String> {
         let mut status = self.status.subscribe();
@@ -278,7 +280,7 @@ impl LocalWhisper {
             WhisperStatus::Loading { model: m } | WhisperStatus::Ready { model: m } if *m == model
         );
         if !loading {
-            self.load(model, path);
+            self.load(model.clone(), path);
         }
         loop {
             match status.borrow_and_update().clone() {
@@ -470,7 +472,7 @@ mod tests {
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap())
                     .join("Library/Application Support/com.touchless.desktop/models")
-                    .join(WhisperModel::WhisperSmall.spec().file)
+                    .join(crate::models::WhisperModel::WhisperSmall.spec().file)
             });
         assert!(
             path.is_file(),
