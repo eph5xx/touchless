@@ -117,7 +117,7 @@ const HOTKEY_MESSAGES = {
 };
 
 /** Renders the warnings above the recorder from the shared app state. */
-export function renderCallouts({ recorder, settings, permissions, models, whisper }) {
+export function renderCallouts({ recorder, settings, permissions, models, whisper, external }) {
   const callouts = [];
   const callout = (kind, text, actions = []) =>
     el(
@@ -149,6 +149,18 @@ export function renderCallouts({ recorder, settings, permissions, models, whispe
     } else if (whisper?.model === model.id && whisper.state === "loading") {
       callouts.push(callout("info", `Loading ${model.name}…`));
     } else if (whisper?.model === model.id && whisper.state === "failed") {
+      callouts.push(callout("error", whisper.error, openModels));
+    }
+  }
+
+  const picked = settings?.engine?.external && external?.find((item) => item.id === settings.engine.external);
+  if (picked) {
+    const openModels = [["Open Models", () => openSettingsTab("models")]];
+    if (picked.error) {
+      callouts.push(callout("error", `${picked.error} Choose another model.`, openModels));
+    } else if (whisper?.model === picked.id && whisper.state === "loading") {
+      callouts.push(callout("info", `Loading ${picked.name}…`));
+    } else if (whisper?.model === picked.id && whisper.state === "failed") {
       callouts.push(callout("error", whisper.error, openModels));
     }
   }

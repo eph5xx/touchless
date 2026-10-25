@@ -1,11 +1,15 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     chatgpt::{ChatGpt, ChatGptView},
     db::Db,
-    models::{ModelStore, WhisperModel},
+    external,
+    models::{LocalModel, ModelStore, WhisperModel},
     shortcut::Shortcut,
 };
 
@@ -14,11 +18,13 @@ const ENGINE_KEY: &str = "engine";
 const TRANSCRIPTION_KEY: &str = "transcription";
 const SHORTCUT_KEY: &str = "shortcut";
 const OPENAI_METHOD_KEY: &str = "openai_method";
+const EXTERNAL_MODELS_KEY: &str = "external_models";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
-/// What turns speech into text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What turns speech into text. Saved as a string, or as `{"external":"/path"}`
+/// for a model file another app downloaded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Engine {
     /// ElevenLabs Scribe, in the cloud.
@@ -27,20 +33,22 @@ pub enum Engine {
     WhisperLargeV3Turbo,
     WhisperMedium,
     WhisperSmall,
+    External(PathBuf),
 }
 
 impl Engine {
     /// The local model, or `None` for ElevenLabs.
-    pub fn whisper(self) -> Option<WhisperModel> {
-        match self {
-            Self::Elevenlabs => None,
-            Self::WhisperLargeV3Turbo => Some(WhisperModel::WhisperLargeV3Turbo),
-            Self::WhisperMedium => Some(WhisperModel::WhisperMedium),
-            Self::WhisperSmall => Some(WhisperModel::WhisperSmall),
-        }
+    pub fn local(&self) -> Option<LocalModel> {
+        let builtin = match self {
+            Self::Elevenlabs => return None,
+            Self::External(path) => return Some(LocalModel::External(path.clone())),
+            Self::WhisperLargeV3Turbo => WhisperModel::WhisperLargeV3Turbo,
+            Self::WhisperMedium => WhisperModel::WhisperMedium,
+            Self::WhisperSmall => WhisperModel::WhisperSmall,
+        };
+        Some(LocalModel::Builtin(builtin))
     }
 }
-
 impl From<WhisperModel> for Engine {
     fn from(model: WhisperModel) -> Self {
         match model {
@@ -370,6 +378,7 @@ pub struct Settings {
     openai_method: Mutex<OpenAiMethod>,
     chatgpt: Arc<ChatGpt>,
     engine: Mutex<Engine>,
+    external_models: Mutex<Vec<PathBuf>>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
     shortcut: Mutex<Shortcut>,
@@ -386,6 +395,7 @@ impl Settings {
             openai_method: Mutex::new(load_json(db, OPENAI_METHOD_KEY)),
             chatgpt,
             engine: Mutex::new(load_json(db, ENGINE_KEY)),
+            external_models: Mutex::new(load_json(db, EXTERNAL_MODELS_KEY)),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_transcription(db)),
             shortcut: Mutex::new(load_shortcut(db)),
@@ -470,6 +480,7 @@ impl Settings {
             openai_method: Mutex::new(method),
             chatgpt: Arc::new(chatgpt),
             engine: Mutex::default(),
+            external_models: Mutex::default(),
             preferences: Mutex::default(),
             transcription: Mutex::default(),
             shortcut: Mutex::default(),
@@ -477,14 +488,24 @@ impl Settings {
     }
 
     pub fn engine(&self) -> Engine {
-        *self.engine.lock().unwrap()
+        self.engine.lock().unwrap().clone()
     }
 
     pub fn set_engine(&self, db: &Db, engine: Engine, models: &ModelStore) -> Result<(), String> {
-        if let Some(model) = engine.whisper()
-            && !models.is_downloaded(model)
-        {
-            return Err(format!("Download {} first", model.name()));
+        match engine.local() {
+            Some(LocalModel::Builtin(model)) if !models.is_downloaded(model) => {
+                return Err(format!("Download {} first", model.name()));
+            }
+            Some(LocalModel::External(path)) => {
+                if !self.external_models().contains(&path) {
+                    return Err(format!(
+                        "Add {} with Choose model file… first",
+                        external::file_name(&path)
+                    ));
+                }
+                external::inspect(&path)?;
+            }
+            _ => {}
         }
         save_json(db, ENGINE_KEY, &engine)
             .map_err(|error| format!("could not save the speech engine: {error}"))?;
@@ -492,6 +513,33 @@ impl Settings {
         Ok(())
     }
 
+    /// Model files from other apps that the user picked, in the order added.
+    pub fn external_models(&self) -> Vec<PathBuf> {
+        self.external_models.lock().unwrap().clone()
+    }
+
+    pub fn add_external_model(&self, db: &Db, path: PathBuf) -> Result<(), String> {
+        let mut current = self.external_models.lock().unwrap();
+        if current.contains(&path) {
+            return Ok(());
+        }
+        let mut next = current.clone();
+        next.push(path);
+        save_json(db, EXTERNAL_MODELS_KEY, &next)
+            .map_err(|error| format!("could not save the model list: {error}"))?;
+        *current = next;
+        Ok(())
+    }
+
+    /// Forgets `path`; the file itself stays.
+    pub fn remove_external_model(&self, db: &Db, path: &Path) -> Result<(), String> {
+        let mut current = self.external_models.lock().unwrap();
+        let next: Vec<PathBuf> = current.iter().filter(|p| *p != path).cloned().collect();
+        save_json(db, EXTERNAL_MODELS_KEY, &next)
+            .map_err(|error| format!("could not save the model list: {error}"))?;
+        *current = next;
+        Ok(())
+    }
     pub fn preferences(&self) -> Preferences {
         *self.preferences.lock().unwrap()
     }
@@ -681,7 +729,10 @@ mod tests {
             Engine::Elevenlabs
         );
         for model in WhisperModel::ALL {
-            assert_eq!(Engine::from(model).whisper(), Some(model));
+            assert_eq!(
+                Engine::from(model).local(),
+                Some(LocalModel::Builtin(model))
+            );
             assert_eq!(
                 serde_json::to_value(Engine::from(model)).unwrap(),
                 serde_json::to_value(model).unwrap()
@@ -691,6 +742,80 @@ mod tests {
         assert_eq!(load_json::<Engine>(&db, ENGINE_KEY), Engine::Elevenlabs);
     }
 
+    #[test]
+    fn external_engine_round_trips() {
+        let engine = Engine::External("/models/ggml-base.bin".into());
+        let json = serde_json::to_string(&engine).unwrap();
+        assert_eq!(json, r#"{"external":"/models/ggml-base.bin"}"#);
+        assert_eq!(serde_json::from_str::<Engine>(&json).unwrap(), engine);
+        assert_eq!(
+            engine.local(),
+            Some(LocalModel::External("/models/ggml-base.bin".into()))
+        );
+        assert_eq!(
+            serde_json::from_str::<Engine>(r#""whisper_small""#).unwrap(),
+            Engine::WhisperSmall
+        );
+    }
+
+    #[test]
+    fn set_engine_needs_a_listed_valid_external_model() {
+        let db = Db::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let models = ModelStore::new(dir.path().join("models"));
+        let settings = Settings::for_test(None, OpenAiMethod::ApiKey, ChatGpt::for_test(false));
+
+        let good = dir.path().join("ggml-small.bin");
+        std::fs::write(&good, external::test_header(51_865, 12, 12, 80)).unwrap();
+        let bad = dir.path().join("model.ort");
+        std::fs::write(
+            &bad,
+            b"not a whisper model at all, just some other bytes...",
+        )
+        .unwrap();
+
+        let unlisted = settings.set_engine(&db, Engine::External(good.clone()), &models);
+        assert!(unlisted.is_err(), "{unlisted:?}");
+        assert_eq!(settings.engine(), Engine::Elevenlabs);
+
+        settings.add_external_model(&db, bad.clone()).unwrap();
+        assert_eq!(
+            settings.set_engine(&db, Engine::External(bad.clone()), &models),
+            Err("model.ort isn't a whisper.cpp model.".into())
+        );
+        assert_eq!(settings.engine(), Engine::Elevenlabs);
+
+        settings.add_external_model(&db, good.clone()).unwrap();
+        settings
+            .set_engine(&db, Engine::External(good.clone()), &models)
+            .unwrap();
+        assert_eq!(settings.engine(), Engine::External(good.clone()));
+        assert_eq!(load_json::<Engine>(&db, ENGINE_KEY), Engine::External(good));
+    }
+
+    #[test]
+    fn external_models_skip_duplicates_and_save() {
+        let db = Db::open_in_memory().unwrap();
+        let settings = Settings::for_test(None, OpenAiMethod::ApiKey, ChatGpt::for_test(false));
+        let a = PathBuf::from("/models/a.bin");
+        let b = PathBuf::from("/models/b.bin");
+        settings.add_external_model(&db, a.clone()).unwrap();
+        settings.add_external_model(&db, b.clone()).unwrap();
+        settings.add_external_model(&db, a.clone()).unwrap();
+        assert_eq!(settings.external_models(), [a.clone(), b.clone()]);
+        assert_eq!(
+            load_json::<Vec<PathBuf>>(&db, EXTERNAL_MODELS_KEY),
+            [a.clone(), b.clone()]
+        );
+
+        settings.remove_external_model(&db, &a).unwrap();
+        let remaining = vec![b];
+        assert_eq!(settings.external_models(), remaining);
+        assert_eq!(
+            load_json::<Vec<PathBuf>>(&db, EXTERNAL_MODELS_KEY),
+            remaining
+        );
+    }
     #[test]
     fn set_engine_needs_a_downloaded_model() {
         let db = Db::open_in_memory().unwrap();

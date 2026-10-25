@@ -72,6 +72,31 @@ impl WhisperModel {
     }
 }
 
+/// A Whisper model on this Mac: one Touchless downloads, or a file another app did.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LocalModel {
+    Builtin(WhisperModel),
+    External(PathBuf),
+}
+
+impl LocalModel {
+    pub fn name(&self) -> String {
+        match self {
+            Self::Builtin(model) => model.name().to_owned(),
+            Self::External(path) => crate::external::file_name(path),
+        }
+    }
+}
+
+/// The built-in model's id, or the absolute path of an external file.
+impl Serialize for LocalModel {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Builtin(model) => model.serialize(serializer),
+            Self::External(path) => serializer.serialize_str(&path.to_string_lossy()),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelState {
@@ -124,6 +149,14 @@ impl ModelStore {
 
     pub fn path(&self, model: WhisperModel) -> PathBuf {
         self.dir.join(model.spec().file)
+    }
+
+    /// Where `model` is read from.
+    pub fn local_path(&self, model: &LocalModel) -> PathBuf {
+        match model {
+            LocalModel::Builtin(model) => self.path(*model),
+            LocalModel::External(path) => path.clone(),
+        }
     }
 
     pub fn is_downloaded(&self, model: WhisperModel) -> bool {
@@ -382,6 +415,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&WhisperModel::WhisperLargeV3Turbo).unwrap(),
             r#""whisper_large_v3_turbo""#
+        );
+        assert_eq!(
+            serde_json::to_string(&LocalModel::Builtin(WhisperModel::WhisperSmall)).unwrap(),
+            r#""whisper_small""#
+        );
+        assert_eq!(
+            serde_json::to_string(&LocalModel::External("/m/ggml-base.bin".into())).unwrap(),
+            r#""/m/ggml-base.bin""#
         );
     }
 

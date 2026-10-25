@@ -33,4 +33,6 @@ Whisper runs on your Mac, so your audio never leaves it and no key is needed.
 1. Open **Settings → Models**.
 2. Download **Whisper Large v3 Turbo** (1.6 GB, best accuracy), **Medium** (1.5 GB) or **Small** (488 MB, fastest), then click **Use**.
 
+Already have a whisper.cpp model (a `ggml-*.bin` file) from another app such as Handy or Superwhisper? Open **Use your own whisper.cpp model** under **Settings → Models** and click **Choose .bin file…** to use it where it is, without downloading it again.
+
 With a local model, the text appears when you stop talking. **Rewrite** uses OpenAI, if you connect it under **Settings → Services** with an API key or by signing in with your ChatGPT subscription.
