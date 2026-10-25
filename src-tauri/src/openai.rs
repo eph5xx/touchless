@@ -1,7 +1,7 @@
 //! OpenAI, the text model the app lends to plugins as [`Llm`]. Requests are
 //! paid for with an API key or with the user's ChatGPT subscription.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -290,6 +290,9 @@ enum Failure {
 #[derive(Default)]
 struct StreamReader {
     buffer: Vec<u8>,
+    /// Completed message items, keyed by their output position. Some subscription
+    /// responses deliver these here but leave response.completed.output empty.
+    messages: BTreeMap<u64, Value>,
 }
 
 impl StreamReader {
@@ -299,18 +302,38 @@ impl StreamReader {
             .extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
         while let Some(end) = self.buffer.windows(2).position(|pair| pair == b"\n\n") {
             let block: Vec<u8> = self.buffer.drain(..end + 2).collect();
-            if let Some(outcome) = event_data(&block).and_then(|event| final_outcome(&event)) {
+            if let Some(outcome) = event_data(&block).and_then(|event| self.event(&event)) {
                 return Some(outcome);
             }
         }
         None
     }
 
+    fn event(&mut self, event: &Value) -> Option<Result<Value, Failure>> {
+        if event["type"] == "response.output_item.done"
+            && event["item"]["type"] == "message"
+            && let Some(index) = event["output_index"].as_u64()
+        {
+            self.messages.insert(index, event["item"].clone());
+        }
+        if event["type"] == "response.completed"
+            && event["response"]["output"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        {
+            let output: Vec<_> = self.messages.values().cloned().collect();
+            return Some(parse_output(&json!({ "output": output })).map_err(Failure::Message));
+        }
+        // A completed item alone is not success: a usage-limit error or an
+        // incomplete response can still follow it.
+        final_outcome(event)
+    }
+
     /// The outcome when the stream ends.
     fn finish(&mut self) -> Result<Value, Failure> {
         let rest = std::mem::take(&mut self.buffer);
         event_data(&rest)
-            .and_then(|event| final_outcome(&event))
+            .and_then(|event| self.event(&event))
             .unwrap_or_else(|| Err(Failure::Message("OpenAI's answer was cut off".into())))
     }
 }
@@ -505,6 +528,74 @@ mod tests {
         // The final event may arrive without a trailing blank line.
         let unterminated = format!("data: {completed}");
         assert_eq!(read(&unterminated), Ok(json!({ "ok": true })));
+    }
+
+    fn completed_message(index: u64, content: Value) -> Value {
+        json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": { "type": "message", "status": "completed", "content": [content] }
+        })
+    }
+
+    #[test]
+    fn retains_streamed_message_when_completed_output_is_empty() {
+        // Reproduces a live ChatGPT subscription response: text and the message
+        // were emitted successfully, but the terminal output array was empty.
+        let message =
+            completed_message(1, json!({ "type": "output_text", "text": "{\"ok\":true}" }));
+        let completed = json!({ "type": "response.completed", "response": { "status": "completed", "output": [] } });
+        let prefix = sse(&[
+            json!({ "type": "response.output_text.delta", "output_index": 1, "content_index": 0, "delta": "{\"ok\":true}" }),
+            json!({ "type": "response.output_text.done", "output_index": 1, "content_index": 0, "text": "{\"ok\":true}" }),
+            message.clone(),
+            message, // A repeated item replaces its prior copy.
+        ]);
+        let mut reader = StreamReader::default();
+        assert!(reader.push(prefix.as_bytes()).is_none());
+        assert_eq!(
+            reader.push(sse(&[completed.clone()]).as_bytes()),
+            Some(Ok(json!({ "ok": true })))
+        );
+        assert_eq!(
+            read(&format!("{prefix}data: {completed}")),
+            Ok(json!({ "ok": true }))
+        );
+    }
+
+    #[test]
+    fn full_terminal_output_takes_precedence_over_cached_items() {
+        let stream = sse(&[
+            completed_message(
+                0,
+                json!({ "type": "output_text", "text": "{\"ok\":false}" }),
+            ),
+            json!({ "type": "response.completed", "response": { "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":true}" }] }] } }),
+        ]);
+        assert_eq!(read(&stream), Ok(json!({ "ok": true })));
+    }
+
+    #[test]
+    fn cached_messages_do_not_hide_failures_refusals_or_truncated_streams() {
+        let message =
+            completed_message(0, json!({ "type": "output_text", "text": "{\"ok\":true}" }));
+        for terminal in [
+            json!({ "type": "response.failed", "response": { "error": { "code": USAGE_LIMIT_CODE } } }),
+            json!({ "type": "response.incomplete", "response": { "incomplete_details": { "reason": "max_output_tokens" } } }),
+            json!({ "type": "error", "code": "server_error", "message": "oops" }),
+        ] {
+            assert!(read(&sse(&[message.clone(), terminal])).is_err());
+        }
+        assert!(read(&sse(&[message])).is_err());
+        let completed = json!({ "type": "response.completed", "response": { "output": [] } });
+        let refusal = completed_message(0, json!({ "type": "refusal", "refusal": "can't help" }));
+        assert_eq!(
+            read(&sse(&[refusal, completed.clone()])),
+            Err(Failure::Message("OpenAI declined: can't help".into()))
+        );
+        let invalid = completed_message(0, json!({ "type": "output_text", "text": "not JSON" }));
+        assert!(read(&sse(&[invalid, completed.clone()])).is_err());
+        assert!(read(&sse(&[completed])).is_err());
     }
 
     #[test]
