@@ -19,13 +19,24 @@ const PROVIDERS = {
   openai: {
     name: "OpenAI",
     description:
-      "Powers Rewrite with local models and plugins like Vocabulary Coach. Your key stays in your Mac's Keychain.",
+      "Powers Rewrite with local models and plugins like Vocabulary Coach. Connect it with an API key or your ChatGPT plan.",
   },
 };
+const OPENAI_METHODS = [
+  ["api_key", "API key"],
+  ["chatgpt", "ChatGPT plan"],
+];
+const OPENAI_METHOD_HINTS = {
+  api_key: "Billed to your OpenAI account. Your key stays in your Mac's Keychain.",
+  chatgpt: "Requests use the usage included in your ChatGPT plan. Your sign-in stays in your Mac's Keychain.",
+};
+const SIGN_IN_CANCELLED = "Sign-in cancelled";
 
 let onChange = () => {};
 let current = null;
 let recordingShortcut = false;
+let signingIn = false;
+let welcomeSeen = false;
 
 export function initSettings(handleChange) {
   onChange = handleChange;
@@ -76,6 +87,20 @@ export function initSettings(handleChange) {
   $("transcript-edit").addEventListener("change", (event) =>
     saveTranscription({ transcript_edit: event.target.value }),
   );
+
+  const welcome = $("chatgpt-welcome");
+  $("chatgpt-welcome-ok").addEventListener("click", () => welcome.close());
+  $("chatgpt-welcome-usage").addEventListener("click", openUsage);
+  // Escape closes the dialog too; either way it has been seen.
+  welcome.addEventListener("close", async () => {
+    welcomeSeen = true;
+    if (!current?.openai.chatgpt.show_welcome) return;
+    try {
+      update(await invoke("dismiss_chatgpt_welcome"));
+    } catch (error) {
+      toast(String(error), { error: true });
+    }
+  });
 }
 
 function initSettingsTabs() {
@@ -132,10 +157,15 @@ export function renderSettings(settings) {
     const box = $(`api-key-${provider}`);
     // Keep a typed-but-unsaved key when re-rendering.
     const draft = box.querySelector("input")?.value ?? "";
-    box.replaceChildren(...renderApiKey(provider, settings.api_keys[provider], draft));
+    box.replaceChildren(
+      ...(provider === "openai"
+        ? renderOpenAi(settings, draft)
+        : renderApiKey(provider, settings.api_keys[provider], draft)),
+    );
   }
   renderShortcut(settings);
   renderTranscription(settings);
+  renderWelcome(settings);
 }
 
 function renderShortcut(settings) {
@@ -178,6 +208,25 @@ async function recordShortcut() {
 
 function renderApiKey(provider, status, draft) {
   const { name, description } = PROVIDERS[provider];
+  const badge = status.saved ? ["success", "Saved"] : ["", "Not set"];
+  return [
+    serviceHead(name, badge),
+    el("p", { className: "api-key-description" }, description),
+    apiKeyForm(provider, status, draft),
+  ];
+}
+
+function serviceHead(name, [badgeKind, badgeText]) {
+  return el(
+    "div",
+    { className: "api-key-head" },
+    el("span", { className: "api-key-name" }, name),
+    el("span", { className: `badge ${badgeKind}` }, badgeText),
+  );
+}
+
+function apiKeyForm(provider, status, draft) {
+  const { name } = PROVIDERS[provider];
   const input = el("input", {
     type: "password",
     placeholder: status.hint ? `Current key ${status.hint}` : "Paste API key",
@@ -215,17 +264,124 @@ function renderApiKey(provider, status, draft) {
     }),
   );
 
-  const [badgeKind, badgeText] = status.saved ? ["success", "Saved"] : ["", "Not set"];
+  return el("div", { className: "api-key-form" }, input, save, test, remove);
+}
+
+function renderOpenAi(settings, draft) {
+  const { name, description } = PROVIDERS.openai;
+  const { method, ready, chatgpt } = settings.openai;
+  const badge = ready
+    ? ["success", method === "chatgpt" ? "Connected" : "Saved"]
+    : ["", "Not set"];
   return [
+    serviceHead(name, badge),
+    el("p", { className: "api-key-description" }, description),
+    methodPicker(method),
+    el("p", { className: "method-hint" }, OPENAI_METHOD_HINTS[method]),
+    method === "chatgpt"
+      ? chatgptControls(chatgpt)
+      : apiKeyForm("openai", settings.api_keys.openai, draft),
+  ];
+}
+
+function methodPicker(method) {
+  return el(
+    "div",
+    { className: "segmented", role: "radiogroup", ariaLabel: "How to connect OpenAI" },
+    ...OPENAI_METHODS.map(([value, label]) => {
+      const selected = value === method;
+      const button = el(
+        "button",
+        { type: "button", role: "radio", className: selected ? "active" : "", ariaChecked: String(selected) },
+        label,
+      );
+      button.addEventListener("click", () => {
+        if (selected) return;
+        run(button, async () => update(await invoke("set_openai_method", { method: value })));
+      });
+      return button;
+    }),
+  );
+}
+
+function chatgptControls(chatgpt) {
+  if (signingIn) {
+    const cancel = el("button", { className: "secondary", type: "button" }, "Cancel");
+    cancel.addEventListener("click", () => invoke("cancel_chatgpt_sign_in"));
+    return el(
+      "div",
+      { className: "api-key-form chatgpt-status" },
+      el("span", { className: "muted" }, "Waiting for your browser…"),
+      cancel,
+    );
+  }
+
+  if (!chatgpt.signed_in) {
+    const signIn = el("button", { className: "chatgpt-button", type: "button" }, "Continue with ChatGPT");
+    signIn.addEventListener("click", signInWithChatGpt);
+    return el("div", { className: "api-key-form" }, signIn);
+  }
+
+  const usage = el("button", { className: "ghost", type: "button" }, "Manage usage");
+  usage.addEventListener("click", openUsage);
+  const test = el("button", { className: "secondary", type: "button" }, "Test");
+  test.addEventListener("click", () =>
+    run(test, async () => toast(await invoke("test_chatgpt"), { duration: 4000 }), "Testing…"),
+  );
+  const signOut = el("button", { className: "ghost danger", type: "button" }, "Sign out");
+  signOut.addEventListener("click", () =>
+    run(signOut, async () => {
+      const { settings, revoked } = await invoke("chatgpt_sign_out");
+      update(settings);
+      if (revoked) toast("Signed out of ChatGPT");
+      else {
+        toast("Signed out on this Mac. OpenAI didn't confirm, so you can also disconnect Touchless in ChatGPT settings.", {
+          duration: 7000,
+        });
+      }
+    }),
+  );
+  return el(
+    "div",
+    { className: "chatgpt-account" },
     el(
       "div",
-      { className: "api-key-head" },
-      el("span", { className: "api-key-name" }, name),
-      el("span", { className: `badge ${badgeKind}` }, badgeText),
+      { className: "chatgpt-status" },
+      el("span", {}, chatgpt.email ? `Signed in as ${chatgpt.email}` : "Signed in"),
+      el("span", { className: "muted" }, "· Using ChatGPT plan"),
     ),
-    el("p", { className: "api-key-description" }, description),
-    el("div", { className: "api-key-form" }, input, save, test, remove),
-  ];
+    el("div", { className: "api-key-form" }, usage, test, signOut),
+  );
+}
+
+async function signInWithChatGpt() {
+  signingIn = true;
+  renderSettings(current);
+  try {
+    const settings = await invoke("chatgpt_sign_in");
+    signingIn = false;
+    update(settings);
+    const { email } = settings.openai.chatgpt;
+    toast(email ? `Signed in as ${email}` : "Signed in with ChatGPT");
+  } catch (error) {
+    signingIn = false;
+    renderSettings(current);
+    if (String(error) !== SIGN_IN_CANCELLED) toast(String(error), { error: true, duration: 6000 });
+  }
+}
+
+async function openUsage() {
+  try {
+    await invoke("open_chatgpt_usage");
+  } catch (error) {
+    toast(String(error), { error: true });
+  }
+}
+
+/** Shown once, after the first sign-in with ChatGPT plan use. */
+function renderWelcome(settings) {
+  const dialog = $("chatgpt-welcome");
+  if (settings.openai.chatgpt.show_welcome && !welcomeSeen && !dialog.open) dialog.showModal();
 }
 
 function renderTranscription(settings) {
@@ -257,16 +413,18 @@ function renderTranscription(settings) {
   $("keyterms-count").textContent = `${options.keyterms.length}/${MAX_KEYTERMS}`;
   $("keyterm-input").disabled = options.keyterms.length >= MAX_KEYTERMS;
 
-  // With a local model, Rewrite runs through OpenAI, so it needs that key.
-  const canRewrite = !local || settings.api_keys.openai.saved;
+  // With a local model, Rewrite runs through OpenAI, so it needs OpenAI connected.
+  const canRewrite = !local || settings.openai.ready;
   const rewrite = canRewrite ? options.rewrite : "off";
+  const openAiCost =
+    settings.openai.method === "chatgpt" ? "Uses your ChatGPT plan." : "Uses your OpenAI key.";
   $("rewrite").disabled = !canRewrite;
   $("rewrite").value = rewrite;
   $("rewrite-hint").textContent = !canRewrite
-    ? "Add an OpenAI key in Services."
+    ? "Connect OpenAI in Services."
     : rewrite === "off"
       ? REWRITE_HINTS.off
-      : `${REWRITE_HINTS[rewrite]} ${local ? "Uses your OpenAI key." : REWRITE_COST}`;
+      : `${REWRITE_HINTS[rewrite]} ${local ? openAiCost : REWRITE_COST}`;
   $("transcript-edit").hidden = rewrite !== "custom";
   // Don't overwrite the instruction while the user is typing it.
   if (document.activeElement !== $("transcript-edit")) {

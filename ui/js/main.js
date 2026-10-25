@@ -94,8 +94,13 @@ await listen("open-transcript", ({ payload }) => focusTranscript(payload));
 await listen("transcripts-changed", () => {
   if (currentPage() === "history") loadHistory();
 });
-await listen("plugins-changed", () => {
+// Also sent when the OpenAI connection changes, including a ChatGPT session ending.
+await listen("plugins-changed", async () => {
   if (currentPage() === "plugins") loadPlugins();
+  app.settings = await invoke("get_settings");
+  renderSettings(app.settings);
+  renderModels(app.settings);
+  renderCallouts(app);
 });
 await listen("dictation-finished", ({ payload }) => {
   if (!payload.delivery) return;

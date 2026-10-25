@@ -15,7 +15,7 @@ use crate::{
     db::{Db, PluginResult},
     openai::OpenAi,
     plugin_api::{Block, BoxFuture, Card, Dictation, Instrument, JsonRequest, Llm, Plugin, Tools},
-    settings::{self, Provider, Settings},
+    settings::{self, Settings},
     tips::Tips,
 };
 
@@ -115,7 +115,7 @@ impl PluginHost {
 /// Instruments that are set up right now.
 pub fn available(settings: &Settings) -> Vec<Instrument> {
     let mut instruments = Vec::new();
-    if settings.api_key(Provider::OpenAi).is_some() {
+    if settings.openai_ready() {
         instruments.push(Instrument::Llm);
     }
     instruments
@@ -140,11 +140,9 @@ impl Llm for Unavailable {
 
 /// Runs `plugins` on a dictation; each card shows as soon as its plugin answers.
 pub async fn run(app: &AppHandle, plugins: Vec<Arc<dyn Plugin>>, dictation: Dictation) {
-    let openai_key = app.state::<Settings>().api_key(Provider::OpenAi);
-    let llm: Box<dyn Llm> = match openai_key.map(OpenAi::new) {
-        Some(Ok(client)) => Box::new(client),
-        Some(Err(error)) => Box::new(Unavailable(error)),
-        None => Box::new(Unavailable("Add an OpenAI key in Settings".into())),
+    let llm: Box<dyn Llm> = match OpenAi::from_settings(&app.state::<Settings>()) {
+        Ok(client) => Box::new(client),
+        Err(error) => Box::new(Unavailable(error)),
     };
     let tools = Tools { llm: llm.as_ref() };
 
@@ -295,6 +293,29 @@ mod tests {
         assert_eq!(host.applicable(&ready, &dictation("hello there")).len(), 1);
         assert!(host.applicable(&[], &dictation("hello there")).is_empty());
         assert!(host.applicable(&ready, &dictation("skip")).is_empty());
+    }
+
+    #[test]
+    fn lends_the_llm_when_the_selected_method_is_set_up() {
+        use crate::{chatgpt::ChatGpt, settings::OpenAiMethod};
+
+        let available_with = |key: Option<&str>, method, signed_in| {
+            available(&Settings::for_test(
+                key,
+                method,
+                ChatGpt::for_test(signed_in),
+            ))
+        };
+        assert_eq!(
+            available_with(Some("sk"), OpenAiMethod::ApiKey, false),
+            [Instrument::Llm]
+        );
+        assert!(available_with(None, OpenAiMethod::ApiKey, true).is_empty());
+        assert_eq!(
+            available_with(None, OpenAiMethod::ChatGpt, true),
+            [Instrument::Llm]
+        );
+        assert!(available_with(Some("sk"), OpenAiMethod::ChatGpt, false).is_empty());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+mod chatgpt;
 mod db;
 mod elevenlabs;
 mod hotkey;
@@ -21,6 +22,7 @@ mod whisper;
 
 use std::sync::Arc;
 
+use chatgpt::ChatGpt;
 use db::{Db, HistoryPage, HistoryQuery};
 use hotkey::Hotkey;
 use mcp_clients::{ClientId, McpView};
@@ -29,7 +31,10 @@ use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
 use plugin_host::{PluginHost, PluginView};
 use recorder::{Recorder, Snapshot};
-use settings::{Engine, Preferences, Provider, Settings, SettingsView, TranscriptionOptions};
+use serde::Serialize;
+use settings::{
+    Engine, OpenAiMethod, Preferences, Provider, Settings, SettingsView, TranscriptionOptions,
+};
 use shortcut::Shortcut;
 use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
@@ -105,8 +110,93 @@ async fn test_api_key(settings: State<'_, Settings>, provider: Provider) -> Resu
         .ok_or_else(|| "Add a key first".to_owned())?;
     match provider {
         Provider::ElevenLabs => settings::test_api_key(&key, &settings.transcription()).await,
-        Provider::OpenAi => openai::OpenAi::new(key)?.verify().await,
+        Provider::OpenAi => {
+            openai::OpenAi::new(openai::Auth::ApiKey(key))?
+                .verify()
+                .await
+        }
     }
+}
+
+#[tauri::command]
+fn set_openai_method(
+    app: AppHandle,
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    method: OpenAiMethod,
+) -> Result<SettingsView, String> {
+    settings.set_openai_method(&db, method)?;
+    let _ = app.emit("plugins-changed", ());
+    Ok(settings.view())
+}
+
+/// Waits for the browser sign-in; a successful one selects the ChatGPT plan.
+#[tauri::command]
+async fn chatgpt_sign_in(
+    app: AppHandle,
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    chatgpt: State<'_, Arc<ChatGpt>>,
+) -> Result<SettingsView, String> {
+    let result = chatgpt.sign_in(&db).await;
+    if result.as_ref().err().map(String::as_str) != Some(chatgpt::CANCELLED) {
+        tray::show_main(&app, None);
+    }
+    result?;
+    settings.set_openai_method(&db, OpenAiMethod::ChatGpt)?;
+    let _ = app.emit("plugins-changed", ());
+    Ok(settings.view())
+}
+
+#[tauri::command]
+fn cancel_chatgpt_sign_in(chatgpt: State<'_, Arc<ChatGpt>>) {
+    chatgpt.cancel_sign_in();
+}
+
+#[derive(Serialize)]
+struct SignOut {
+    settings: SettingsView,
+    /// Whether OpenAI confirmed the session ended.
+    revoked: bool,
+}
+
+#[tauri::command]
+async fn chatgpt_sign_out(
+    app: AppHandle,
+    settings: State<'_, Settings>,
+    chatgpt: State<'_, Arc<ChatGpt>>,
+) -> Result<SignOut, String> {
+    let revoked = chatgpt.sign_out().await?;
+    let _ = app.emit("plugins-changed", ());
+    Ok(SignOut {
+        settings: settings.view(),
+        revoked,
+    })
+}
+
+#[tauri::command]
+async fn test_chatgpt(chatgpt: State<'_, Arc<ChatGpt>>) -> Result<String, String> {
+    if !chatgpt.signed_in() {
+        return Err(chatgpt::NOT_SIGNED_IN.into());
+    }
+    openai::OpenAi::new(openai::Auth::ChatGpt(Arc::clone(&chatgpt)))?
+        .verify()
+        .await
+}
+
+#[tauri::command]
+fn open_chatgpt_usage() -> Result<(), String> {
+    chatgpt::open_url(chatgpt::USAGE_URL)
+}
+
+#[tauri::command]
+fn dismiss_chatgpt_welcome(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    chatgpt: State<'_, Arc<ChatGpt>>,
+) -> Result<SettingsView, String> {
+    chatgpt.dismiss_welcome(&db)?;
+    Ok(settings.view())
 }
 
 #[tauri::command]
@@ -349,6 +439,13 @@ fn main() {
             set_api_key,
             remove_api_key,
             test_api_key,
+            set_openai_method,
+            chatgpt_sign_in,
+            cancel_chatgpt_sign_in,
+            chatgpt_sign_out,
+            test_chatgpt,
+            open_chatgpt_usage,
+            dismiss_chatgpt_welcome,
             list_models,
             get_whisper_status,
             download_model,
@@ -374,7 +471,12 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let db = Db::open(&data_dir.join("touchless.db"))?;
-            let settings = Settings::load(&db);
+            let chatgpt = Arc::new(ChatGpt::load(&db));
+            let handle = app.handle().clone();
+            chatgpt.on_lost(move || {
+                let _ = handle.emit("plugins-changed", ());
+            });
+            let settings = Settings::load(&db, Arc::clone(&chatgpt));
             let shortcut = settings.shortcut();
 
             let models = ModelStore::new(data_dir.join("models"));
@@ -387,6 +489,7 @@ fn main() {
             app.manage(models);
             app.manage(whisper);
             app.manage(settings);
+            app.manage(chatgpt);
             app.manage(PluginHost::load(&db, plugins::all()));
             app.manage(db);
 

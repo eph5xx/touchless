@@ -400,13 +400,16 @@ impl Recorder {
             self.apply(TranscriptEvent::Language(language));
         }
 
-        let openai_key = self.app.state::<Settings>().api_key(Provider::OpenAi);
-        if let (Some(instruction), Some(key), false) = (
-            options.edit_instruction(),
-            openai_key,
-            text.trim().is_empty(),
-        ) {
-            match rewrite(key, instruction, &text).await {
+        let openai = {
+            let settings = self.app.state::<Settings>();
+            settings
+                .openai_ready()
+                .then(|| OpenAi::from_settings(&settings))
+        };
+        if let (Some(instruction), Some(openai), false) =
+            (options.edit_instruction(), openai, text.trim().is_empty())
+        {
+            match rewrite(openai, instruction, &text).await {
                 Ok(edited) => self.apply(TranscriptEvent::Edited {
                     original: text,
                     edited,
@@ -496,11 +499,11 @@ async fn open_microphone(
 }
 
 async fn rewrite(
-    key: String,
+    openai: std::result::Result<OpenAi, String>,
     instruction: &str,
     text: &str,
 ) -> std::result::Result<String, String> {
-    OpenAi::new(key)?.rewrite(instruction, text).await
+    openai?.rewrite(instruction, text).await
 }
 
 /// The language heard most often. Without detection, the main language counts
