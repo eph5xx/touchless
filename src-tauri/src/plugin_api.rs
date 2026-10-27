@@ -2,7 +2,7 @@
 //! and use only what this module exports: the app runs them after each dictation
 //! and hands them its instruments through [`Tools`].
 
-use std::{future::Future, pin::Pin};
+use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,83 @@ pub struct Manifest {
     pub name: &'static str,
     pub description: &'static str,
     pub needs: &'static [Instrument],
+    /// Shown on the plugin's row while it is on; values reach
+    /// [`Plugin::on_dictation`].
+    pub settings: &'static [Setting],
+}
+
+#[derive(Debug, Serialize)]
+pub struct Setting {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub hint: &'static str,
+    pub kind: SettingKind,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SettingKind {
+    /// A whole number picked with a slider.
+    Range {
+        min: i64,
+        max: i64,
+        step: i64,
+        unit: &'static str,
+        default: i64,
+    },
+    /// Any of `choices`, but at least one. The value is a list of choice ids.
+    AnyOf {
+        choices: &'static [Choice],
+        default: &'static [&'static str],
+    },
+}
+
+impl SettingKind {
+    pub fn default_value(&self) -> serde_json::Value {
+        match self {
+            Self::Range { default, .. } => (*default).into(),
+            Self::AnyOf { default, .. } => (*default).into(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Choice {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub hint: &'static str,
+}
+
+/// The current value of each setting, with defaults filled in.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SettingValues(BTreeMap<String, serde_json::Value>);
+
+impl SettingValues {
+    pub fn set(&mut self, id: &str, value: serde_json::Value) {
+        self.0.insert(id.to_owned(), value);
+    }
+
+    pub fn get(&self, id: &str) -> Option<&serde_json::Value> {
+        self.0.get(id)
+    }
+
+    pub fn number(&self, id: &str) -> Option<i64> {
+        self.0.get(id)?.as_i64()
+    }
+
+    /// The chosen ids of an [`SettingKind::AnyOf`] setting.
+    pub fn chosen(&self, id: &str) -> Vec<String> {
+        self.0
+            .get(id)
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// A finished dictation that was already pasted and saved to history.
@@ -92,6 +169,7 @@ pub trait Plugin: Send + Sync {
     fn on_dictation<'a>(
         &'a self,
         dictation: &'a Dictation,
+        settings: &'a SettingValues,
         tools: &'a Tools<'a>,
     ) -> BoxFuture<'a, Result<Option<Card>, String>>;
 

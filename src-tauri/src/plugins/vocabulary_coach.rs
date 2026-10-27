@@ -5,42 +5,128 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::plugin_api::{
-    Block, BoxFuture, Card, Dictation, Instrument, JsonRequest, Manifest, Plugin, Tone, Tools,
+    Block, BoxFuture, Card, Choice, Dictation, Instrument, JsonRequest, Manifest, Plugin, Setting,
+    SettingKind, SettingValues, Tone, Tools,
 };
 
 pub struct VocabularyCoach;
+
+const FOCUS: &str = "focus";
 
 static MANIFEST: Manifest = Manifest {
     // The plugin used to be "English Teacher"; saved settings and history use this id.
     id: "english_teacher",
     name: "Vocabulary Coach",
-    description: "After English dictations, suggests one better word in a small card at the top-right. Your words are still pasted as you said them.",
+    description: "Suggests a better word after English dictations.",
     needs: &[Instrument::Llm],
+    settings: &[Setting {
+        id: FOCUS,
+        label: "Focus",
+        hint: "Kinds of tips to look for.",
+        kind: SettingKind::AnyOf {
+            choices: &[
+                Choice {
+                    id: "phrasing",
+                    label: "Phrasing",
+                    hint: "reach my friends → reach out to my friends",
+                },
+                Choice {
+                    id: "combinations",
+                    label: "Word pairs",
+                    hint: "make a photo → take a photo",
+                },
+                Choice {
+                    id: "precise",
+                    label: "Precise words",
+                    hint: "good food → delicious food",
+                },
+            ],
+            default: &["phrasing", "combinations", "precise"],
+        },
+    }],
 };
 
 /// Shorter dictations rarely have a word choice worth improving.
 const MIN_WORDS: usize = 3;
 
-const INSTRUCTIONS: &str = "You are a vocabulary coach for a non-native English speaker who dictated the text below by voice. \
+const INTRO: &str = "You are a vocabulary coach for a non-native English speaker who dictated the text below by voice. \
 It was transcribed automatically and has already been sent as is.
 Ignore grammar, punctuation, capitalization, filler words, false starts and likely speech-to-text errors.
 Set is_english to false if the text is mostly not English.
 Otherwise look only at word choice and keep exactly what the speaker meant. Never suggest a word that changes the meaning, \
 even slightly, and never guess at a different intent. If you are not sure what the speaker meant, set has_tip to false.
-Look for: a word that is almost right but not what a native speaker would say (for example \"reach my friends\" instead of \
-\"reach out to my friends\"), a wrong word combination (like \"make a photo\" instead of \"take a photo\"), \
-or a vague, overused word (like good, simple, big, do, make, thing) where a more precise everyday word says the same thing better. \
-Suggest words the speaker can reuse in daily speech; skip rare, formal or fancy words and changes that are only a matter of taste.
+";
+
+/// What to look for, per focus choice, in the order the prompt lists them.
+const KINDS: [(&str, &str); 3] = [
+    (
+        "phrasing",
+        "a word that is almost right but not what a native speaker would say (for example \"reach my friends\" instead of \
+\"reach out to my friends\")",
+    ),
+    (
+        "combinations",
+        "a wrong word combination (like \"make a photo\" instead of \"take a photo\")",
+    ),
+    (
+        "precise",
+        "a vague, overused word (like good, simple, big, do, make, thing) where a more precise everyday word says the same thing better",
+    ),
+];
+
+const ANSWER: &str = "Suggest words the speaker can reuse in daily speech; skip rare, formal or fancy words and changes that are only a matter of taste.
 Before answering, put the replacement into the sentence and check that it says the same thing as the original. If not, set has_tip to false.
 If there is such a word, set has_tip to true. Put the word or shortest phrase in used, copied exactly from the text, \
 and the replacement in better, in the form that fits the sentence.
 In note, say in 3 to 7 words why the better word fits. Always start with \"The usual\" or \"A more precise\" and end with a period. \
 No quotes, no grammar terms, do not define the word. Examples:
-make a photo -> take a photo: The usual verb for photos.
-reach my friends -> reach out to my friends: The usual phrase for contacting someone.
-good food -> delicious food: A more precise word for tasty food.
-If no word is clearly better, set has_tip to false and leave used, better and note empty.";
+";
 
+/// Example tips, per focus choice.
+const EXAMPLES: [(&str, &str); 3] = [
+    (
+        "combinations",
+        "make a photo -> take a photo: The usual verb for photos.",
+    ),
+    (
+        "phrasing",
+        "reach my friends -> reach out to my friends: The usual phrase for contacting someone.",
+    ),
+    (
+        "precise",
+        "good food -> delicious food: A more precise word for tasty food.",
+    ),
+];
+
+const OUTRO: &str =
+    "If no word is clearly better, set has_tip to false and leave used, better and note empty.";
+
+/// The prompt for the chosen kinds of tips; no choice means all of them.
+fn instructions(focus: &[String]) -> String {
+    let chosen = |id: &str| focus.is_empty() || focus.iter().any(|choice| choice == id);
+    let kinds: Vec<&str> = KINDS
+        .iter()
+        .filter(|(id, _)| chosen(id))
+        .map(|(_, text)| *text)
+        .collect();
+    let look_for = match kinds.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [first, second] => format!("{first} or {second}"),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    };
+    let only = if kinds.len() < KINDS.len() {
+        " Only these kinds count; if the only better word is of another kind, set has_tip to false."
+    } else {
+        ""
+    };
+    let examples: String = EXAMPLES
+        .iter()
+        .filter(|(id, _)| chosen(id))
+        .map(|(_, line)| format!("{line}\n"))
+        .collect();
+    format!("{INTRO}Look for: {look_for}.{only} {ANSWER}{examples}{OUTRO}")
+}
 #[derive(Debug, Deserialize)]
 struct Verdict {
     is_english: bool,
@@ -130,13 +216,14 @@ impl Plugin for VocabularyCoach {
     fn on_dictation<'a>(
         &'a self,
         dictation: &'a Dictation,
+        settings: &'a SettingValues,
         tools: &'a Tools<'a>,
     ) -> BoxFuture<'a, Result<Option<Card>, String>> {
         Box::pin(async move {
             let answer = tools
                 .llm
                 .json(JsonRequest {
-                    instructions: INSTRUCTIONS.into(),
+                    instructions: instructions(&settings.chosen(FOCUS)),
                     input: dictation.text.clone(),
                     schema_name: "word_tip".into(),
                     schema: schema(),
@@ -166,17 +253,42 @@ impl Plugin for VocabularyCoach {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::plugin_api::Llm;
 
-    struct FakeLlm(Result<serde_json::Value, String>);
+    struct FakeLlm {
+        answer: Result<serde_json::Value, String>,
+        instructions: Mutex<String>,
+    }
+
+    impl FakeLlm {
+        fn new(answer: Result<serde_json::Value, String>) -> Self {
+            Self {
+                answer,
+                instructions: Mutex::default(),
+            }
+        }
+    }
 
     impl Llm for FakeLlm {
         fn json(&self, request: JsonRequest) -> BoxFuture<'_, Result<serde_json::Value, String>> {
             assert_eq!(request.schema_name, "word_tip");
-            let answer = self.0.clone();
+            *self.instructions.lock().unwrap() = request.instructions;
+            let answer = self.answer.clone();
             Box::pin(async move { answer })
         }
+    }
+
+    fn focus(choices: &[&str]) -> SettingValues {
+        let mut values = SettingValues::default();
+        values.set(FOCUS, json!(choices));
+        values
+    }
+
+    fn all_focus() -> SettingValues {
+        focus(&["phrasing", "combinations", "precise"])
     }
 
     fn dictation(text: &str, language: Option<&str>) -> Dictation {
@@ -188,10 +300,12 @@ mod tests {
     }
 
     async fn check(answer: serde_json::Value) -> Result<Option<Card>, String> {
-        let llm = FakeLlm(Ok(answer));
+        let llm = FakeLlm::new(Ok(answer));
         let tools = Tools { llm: &llm };
         let dictation = dictation("It was a simple chat with friends", Some("eng"));
-        VocabularyCoach.on_dictation(&dictation, &tools).await
+        VocabularyCoach
+            .on_dictation(&dictation, &all_focus(), &tools)
+            .await
     }
 
     fn verdict(
@@ -323,10 +437,42 @@ mod tests {
     async fn reports_model_errors() {
         assert!(check(json!({ "is_english": true })).await.is_err());
 
-        let llm = FakeLlm(Err("OpenAI rejected the key".into()));
+        let llm = FakeLlm::new(Err("OpenAI rejected the key".into()));
         let tools = Tools { llm: &llm };
         let dictation = dictation("It was a simple chat", None);
-        let result = VocabularyCoach.on_dictation(&dictation, &tools).await;
+        let result = VocabularyCoach
+            .on_dictation(&dictation, &all_focus(), &tools)
+            .await;
         assert_eq!(result, Err("OpenAI rejected the key".into()));
+    }
+
+    #[test]
+    fn instructions_cover_only_the_chosen_focus() {
+        let all = instructions(&["phrasing".into(), "combinations".into(), "precise".into()]);
+        for text in ["reach my friends", "make a photo", "good food"] {
+            assert!(all.contains(text), "{text}");
+        }
+        assert!(!all.contains("Only these kinds count"));
+        assert!(all.contains("instead of \"take a photo\"), or a vague"));
+
+        let two = instructions(&["combinations".into(), "precise".into()]);
+        assert!(two.contains("instead of \"take a photo\") or a vague"));
+        assert!(!two.contains("reach my friends"));
+        assert!(two.contains("Only these kinds count"));
+    }
+
+    #[tokio::test]
+    async fn asks_the_model_about_the_chosen_focus() {
+        let llm = FakeLlm::new(Ok(verdict(true, false, "", "", "")));
+        let tools = Tools { llm: &llm };
+        let dictation = dictation("It was a good dinner", None);
+        VocabularyCoach
+            .on_dictation(&dictation, &focus(&["precise"]), &tools)
+            .await
+            .unwrap();
+        let instructions = llm.instructions.lock().unwrap();
+        assert!(instructions.contains("Look for: a vague, overused word"));
+        assert!(instructions.contains("good food -> delicious food"));
+        assert!(!instructions.contains("make a photo"));
     }
 }

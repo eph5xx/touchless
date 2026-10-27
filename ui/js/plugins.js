@@ -1,11 +1,8 @@
-import { $, el, icon, invoke, toast } from "./util.js";
+import { $, el, invoke, toast } from "./util.js";
 
-/** User-facing setup details for instruments an enhancement needs. */
-const DEPENDENCIES = {
-  llm: {
-    status: "Needs OpenAI",
-    action: "Connect OpenAI",
-  },
+/** Buttons that set up instruments an enhancement needs. */
+const SETUP_ACTIONS = {
+  llm: "Connect OpenAI",
 };
 
 let plugins = [];
@@ -21,14 +18,7 @@ export async function loadPlugins() {
 }
 
 function render() {
-  const enabled = plugins.filter((plugin) => plugin.enabled);
-  const available = plugins.filter((plugin) => !plugin.enabled);
-  const group = (label, items) =>
-    items.length
-      ? [el("div", { className: "collection-label" }, label), ...items.map(renderPlugin)]
-      : [];
-
-  $("plugins-list").replaceChildren(...group("On", enabled), ...group("Available", available));
+  $("plugins-list").replaceChildren(...plugins.map(renderPlugin));
   $("plugins-empty").hidden = plugins.length > 0;
 }
 
@@ -45,38 +35,24 @@ function renderPlugin(plugin) {
   });
   toggle.addEventListener("change", () => setEnabled(plugin, toggle.checked));
 
-  const status = needsSetup
-    ? ["warning", DEPENDENCIES[missingDependencies[0]]?.status ?? "Setup required"]
-    : plugin.enabled
-      ? ["success", "On"]
-      : ["", "Available"];
-
-  const setup = missingDependencies.map((instrument) => {
-    const dependency = DEPENDENCIES[instrument];
-    return el(
+  const setup = missingDependencies.map((instrument) =>
+    el(
       "button",
       {
         className: "secondary small enhancement-setup",
         type: "button",
         onclick: openServiceSettings,
       },
-      dependency?.action ?? `Set up ${instrument}`,
-    );
-  });
+      SETUP_ACTIONS[instrument] ?? `Set up ${instrument}`,
+    ),
+  );
 
-  const example =
-    plugin.id === "english_teacher"
+  const settings =
+    plugin.enabled && plugin.settings?.length
       ? el(
           "div",
-          { className: "enhancement-example" },
-          el(
-            "div",
-            { className: "enhancement-example-change" },
-            el("span", { className: "enhancement-before" }, "simple"),
-            el("span", { className: "enhancement-arrow" }, icon("arrow-right")),
-            el("span", { className: "enhancement-after" }, "casual"),
-          ),
-          el("p", {}, "relaxed and informal · Uses OpenAI after English dictations."),
+          { className: "enhancement-settings" },
+          ...plugin.settings.flatMap((setting) => renderSetting(plugin, setting)),
         )
       : null;
 
@@ -95,13 +71,79 @@ function renderPlugin(plugin) {
       el(
         "div",
         { className: "enhancement-controls" },
-        el("span", { className: `badge ${status[0]}` }, status[1]),
         ...setup,
         el("label", { className: "enhancement-toggle", title: toggle.title }, toggle),
       ),
     ),
-    example,
+    settings,
   );
+}
+
+/** The label and control of one setting, as two cells of the settings grid. */
+function renderSetting(plugin, setting) {
+  const label = el(
+    "div",
+    { className: "enhancement-setting-label", title: setting.hint ?? "" },
+    setting.label,
+  );
+
+  if (setting.kind.type === "range") {
+    const { min, max, step, unit } = setting.kind;
+    const value = el("span", { className: "enhancement-range-value" }, `${setting.value} ${unit}`);
+    const input = el("input", {
+      type: "range",
+      min,
+      max,
+      step,
+      value: setting.value,
+      ariaLabel: setting.label,
+    });
+    input.addEventListener("input", () => {
+      value.textContent = `${input.value} ${unit}`;
+    });
+    input.addEventListener("change", () => saveSetting(plugin, setting, Number(input.value)));
+    return [label, el("div", { className: "enhancement-range" }, input, value)];
+  }
+
+  if (setting.kind.type === "any_of") {
+    const chosen = new Set(setting.value);
+    const pills = setting.kind.choices.map((choice) => {
+      const on = chosen.has(choice.id);
+      const last = on && chosen.size === 1;
+      return el(
+        "button",
+        {
+          type: "button",
+          className: "enhancement-pill",
+          "aria-pressed": String(on),
+          disabled: last,
+          title: last ? "Keep at least one on" : (choice.hint ?? ""),
+          onclick: () => {
+            const next = setting.kind.choices
+              .map(({ id }) => id)
+              .filter((id) => (id === choice.id ? !on : chosen.has(id)));
+            saveSetting(plugin, setting, next);
+          },
+        },
+        choice.label,
+      );
+    });
+    return [
+      label,
+      el("div", { className: "enhancement-pills", role: "group", ariaLabel: setting.label }, ...pills),
+    ];
+  }
+
+  return [];
+}
+
+async function saveSetting(plugin, setting, value) {
+  try {
+    plugins = await invoke("set_plugin_setting", { id: plugin.id, setting: setting.id, value });
+  } catch (error) {
+    toast(String(error), { error: true });
+  }
+  render();
 }
 
 function openServiceSettings() {

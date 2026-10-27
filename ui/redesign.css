@@ -407,13 +407,11 @@ button.filter.active {
   gap: 8px;
 }
 
-#plugins-list .collection-label,
 .collection > .collection-label {
   margin-top: 14px;
   padding: 0 3px 2px;
 }
 
-#plugins-list .collection-label:first-child,
 .collection > .collection-label:first-child {
   margin-top: 0;
 }
@@ -469,46 +467,79 @@ button.filter.active {
   display: inline-flex;
 }
 
-.enhancement-example {
-  display: flex;
+.enhancement-settings {
+  display: grid;
+  grid-template-columns: auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  gap: 10px 18px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--hairline);
 }
 
-.enhancement-example-change {
+.enhancement-setting-label {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.enhancement-range,
+.enhancement-pills {
+  justify-self: end;
+}
+
+.enhancement-range {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 8px;
-  font-weight: 600;
+  gap: 10px;
 }
 
-.enhancement-before {
-  color: var(--danger);
-  text-decoration: line-through;
-}
-
-.enhancement-after {
-  color: var(--success);
-}
-
-.enhancement-arrow {
-  display: inline-flex;
-  color: var(--muted);
-}
-
-.enhancement-arrow svg {
-  width: 14px;
-  height: 14px;
-}
-
-.enhancement-example p {
+.enhancement-range input[type="range"] {
+  width: 160px;
   margin: 0;
+  accent-color: var(--accent);
+}
+
+.enhancement-range-value {
+  min-width: 34px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.enhancement-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+button.enhancement-pill {
+  padding: 4px 11px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+button.enhancement-pill:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+button.enhancement-pill[aria-pressed="true"],
+button.enhancement-pill[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* The last pill still on cannot be turned off, but should not look faded. */
+button.enhancement-pill:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 /* MCP */
@@ -949,7 +980,6 @@ button.chatgpt-button:hover:not(:disabled) {
 
   .library-subnav,
   .enhancement-main,
-  .enhancement-example,
   .connection-row,
   .model-main {
     align-items: stretch;
@@ -980,6 +1010,21 @@ button.chatgpt-button:hover:not(:disabled) {
   .enhancement-controls,
   .connection-actions {
     align-self: flex-start;
+  }
+
+  .enhancement-settings {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .enhancement-range,
+  .enhancement-pills {
+    justify-self: start;
+    justify-content: flex-start;
+  }
+
+  .enhancement-setting-label:not(:first-child) {
+    margin-top: 6px;
   }
 
   .prompt-grid {
