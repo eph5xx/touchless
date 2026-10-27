@@ -370,11 +370,24 @@ fn set_plugin_enabled(
     enabled: bool,
 ) -> Result<Vec<PluginView>, String> {
     if host.set_enabled(&db, &id, enabled)?
-        && let Some((name, card)) = host.example(&id)
+        && let Some((name, card, duration)) = host.example(&id)
     {
         let hint = format!("{name} tips will appear here");
-        tips.show_example(&card, plugin_host::EXAMPLE_TIME, &hint);
+        tips.show_example(&card, duration, &hint);
     }
+    Ok(host.view(&plugin_host::available(&settings)))
+}
+
+#[tauri::command]
+fn set_plugin_setting(
+    db: State<'_, Db>,
+    host: State<'_, PluginHost>,
+    settings: State<'_, Settings>,
+    id: String,
+    setting: String,
+    value: serde_json::Value,
+) -> Result<Vec<PluginView>, String> {
+    host.set_setting(&db, &id, &setting, &value)?;
     Ok(host.view(&plugin_host::available(&settings)))
 }
 
@@ -550,6 +563,7 @@ fn main() {
             remove_external_model,
             list_plugins,
             set_plugin_enabled,
+            set_plugin_setting,
             update_transcription,
             update_preferences,
             capture_shortcut,

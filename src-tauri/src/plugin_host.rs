@@ -2,32 +2,54 @@
 //! instruments, shows their cards at the top-right and saves them to history.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     db::{Db, PluginResult},
     openai::OpenAi,
-    plugin_api::{Block, BoxFuture, Card, Dictation, Instrument, JsonRequest, Llm, Plugin, Tools},
+    plugin_api::{
+        BoxFuture, Card, Dictation, Instrument, JsonRequest, Llm, Plugin, Setting, SettingKind,
+        SettingValues, Tools,
+    },
     settings::{self, Settings},
     tips::Tips,
 };
 
 const PLUGINS_KEY: &str = "plugins";
 const PLUGIN_TIMEOUT: Duration = Duration::from_secs(25);
-/// A little longer than real cards, since the example is new to the reader.
-pub const EXAMPLE_TIME: Duration = Duration::from_secs(8);
+/// The example is new to the reader, so it stays at least this long.
+const EXAMPLE_MIN_TIME: Duration = Duration::from_secs(8);
+const DEFAULT_CARD_SECONDS: i64 = 6;
 
-#[derive(Default, Serialize, Deserialize)]
+/// Offered for every plugin, since the app is what shows the cards.
+static CARD_DURATION: Setting = Setting {
+    id: "card_duration",
+    label: "Show for",
+    hint: "How long tips stay on screen. Hovering pauses them.",
+    kind: SettingKind::Range {
+        min: 3,
+        max: 30,
+        step: 1,
+        unit: "s",
+        default: DEFAULT_CARD_SECONDS,
+    },
+};
+
+#[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct StoredPlugins {
     enabled: BTreeSet<String>,
+    /// Plugin id → setting id → value, as saved. Values that no longer fit
+    /// their setting are ignored when read.
+    settings: BTreeMap<String, BTreeMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,34 +60,48 @@ pub struct PluginView {
     enabled: bool,
     /// Instruments the plugin needs that are not set up yet.
     missing: Vec<Instrument>,
+    settings: Vec<SettingView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingView {
+    #[serde(flatten)]
+    setting: &'static Setting,
+    value: Value,
 }
 
 pub struct PluginHost {
     plugins: Vec<Arc<dyn Plugin>>,
-    enabled: Mutex<BTreeSet<String>>,
+    stored: Mutex<StoredPlugins>,
 }
 
 impl PluginHost {
     pub fn load(db: &Db, plugins: Vec<Arc<dyn Plugin>>) -> Self {
-        let stored: StoredPlugins = settings::load_json(db, PLUGINS_KEY);
         Self {
             plugins,
-            enabled: Mutex::new(stored.enabled),
+            stored: Mutex::new(settings::load_json(db, PLUGINS_KEY)),
         }
     }
 
     pub fn view(&self, available: &[Instrument]) -> Vec<PluginView> {
-        let enabled = self.enabled.lock().unwrap();
+        let stored = self.stored.lock().unwrap();
         self.plugins
             .iter()
             .map(|plugin| {
                 let manifest = plugin.manifest();
+                let values = values_of(&stored, plugin.as_ref());
                 PluginView {
                     id: manifest.id,
                     name: manifest.name,
                     description: manifest.description,
-                    enabled: enabled.contains(manifest.id),
+                    enabled: stored.enabled.contains(manifest.id),
                     missing: missing(manifest.needs, available),
+                    settings: all_settings(plugin.as_ref())
+                        .map(|setting| SettingView {
+                            setting,
+                            value: values.get(setting.id).cloned().unwrap_or_default(),
+                        })
+                        .collect(),
                 }
             })
             .collect()
@@ -76,30 +112,55 @@ impl PluginHost {
         if self.find(id).is_none() {
             return Err(format!("there is no plugin \"{id}\""));
         }
-        let mut current = self.enabled.lock().unwrap();
+        let mut current = self.stored.lock().unwrap();
         let mut next = current.clone();
         if enabled {
-            next.insert(id.to_owned());
+            next.enabled.insert(id.to_owned());
         } else {
-            next.remove(id);
+            next.enabled.remove(id);
         }
-        settings::save_json(
-            db,
-            PLUGINS_KEY,
-            &StoredPlugins {
-                enabled: next.clone(),
-            },
-        )
-        .map_err(|error| format!("could not save plugins: {error}"))?;
-        let turned_on = enabled && !current.contains(id);
+        save(db, &next)?;
+        let turned_on = enabled && !current.enabled.contains(id);
         *current = next;
         Ok(turned_on)
     }
 
-    /// The plugin's name and sample card, if it has one.
-    pub fn example(&self, id: &str) -> Option<(&'static str, Card)> {
+    pub fn set_setting(
+        &self,
+        db: &Db,
+        id: &str,
+        setting_id: &str,
+        value: &Value,
+    ) -> Result<(), String> {
+        let plugin = self
+            .find(id)
+            .ok_or_else(|| format!("there is no plugin \"{id}\""))?;
+        let setting = all_settings(plugin.as_ref())
+            .find(|setting| setting.id == setting_id)
+            .ok_or_else(|| format!("{} has no setting \"{setting_id}\"", plugin.manifest().name))?;
+        let value = normalize(&setting.kind, value)?;
+        let mut current = self.stored.lock().unwrap();
+        let mut next = current.clone();
+        next.settings
+            .entry(id.to_owned())
+            .or_default()
+            .insert(setting_id.to_owned(), value);
+        save(db, &next)?;
+        *current = next;
+        Ok(())
+    }
+
+    /// The plugin's settings as they are now, defaults filled in.
+    pub fn values(&self, plugin: &dyn Plugin) -> SettingValues {
+        values_of(&self.stored.lock().unwrap(), plugin)
+    }
+
+    /// The plugin's name, sample card and how long to show it, if it has one.
+    pub fn example(&self, id: &str) -> Option<(&'static str, Card, Duration)> {
         let plugin = self.find(id)?;
-        Some((plugin.manifest().name, plugin.example()?))
+        let card = plugin.example()?;
+        let duration = card_duration(&self.values(plugin.as_ref())).max(EXAMPLE_MIN_TIME);
+        Some((plugin.manifest().name, card, duration))
     }
 
     fn find(&self, id: &str) -> Option<&Arc<dyn Plugin>> {
@@ -114,18 +175,80 @@ impl PluginHost {
         available: &[Instrument],
         dictation: &Dictation,
     ) -> Vec<Arc<dyn Plugin>> {
-        let enabled = self.enabled.lock().unwrap();
+        let stored = self.stored.lock().unwrap();
         self.plugins
             .iter()
             .filter(|plugin| {
                 let manifest = plugin.manifest();
-                enabled.contains(manifest.id)
+                stored.enabled.contains(manifest.id)
                     && missing(manifest.needs, available).is_empty()
                     && plugin.wants(dictation)
             })
             .cloned()
             .collect()
     }
+}
+
+fn save(db: &Db, stored: &StoredPlugins) -> Result<(), String> {
+    settings::save_json(db, PLUGINS_KEY, stored)
+        .map_err(|error| format!("could not save plugins: {error}"))
+}
+
+fn all_settings(plugin: &dyn Plugin) -> impl Iterator<Item = &'static Setting> {
+    plugin.manifest().settings.iter().chain(std::iter::once(&CARD_DURATION))
+}
+
+fn values_of(stored: &StoredPlugins, plugin: &dyn Plugin) -> SettingValues {
+    let saved = stored.settings.get(plugin.manifest().id);
+    let mut values = SettingValues::default();
+    for setting in all_settings(plugin) {
+        let value = saved
+            .and_then(|saved| saved.get(setting.id))
+            .and_then(|value| normalize(&setting.kind, value).ok())
+            .unwrap_or_else(|| setting.kind.default_value());
+        values.set(setting.id, value);
+    }
+    values
+}
+
+/// The value to save for `kind`, or why `value` does not fit it.
+fn normalize(kind: &SettingKind, value: &Value) -> Result<Value, String> {
+    match kind {
+        SettingKind::Range { min, max, step, .. } => {
+            let number = value.as_i64().ok_or("expected a whole number")?;
+            if number < *min || number > *max || (number - min) % step != 0 {
+                return Err(format!("expected a number from {min} to {max}"));
+            }
+            Ok(number.into())
+        }
+        SettingKind::AnyOf { choices, .. } => {
+            let items = value.as_array().ok_or("expected a list")?;
+            let mut chosen = Vec::new();
+            for item in items {
+                let id = item
+                    .as_str()
+                    .filter(|id| choices.iter().any(|choice| choice.id == *id))
+                    .ok_or_else(|| format!("unknown choice {item}"))?;
+                chosen.push(id);
+            }
+            if chosen.is_empty() {
+                return Err("choose at least one".into());
+            }
+            Ok(choices
+                .iter()
+                .filter(|choice| chosen.contains(&choice.id))
+                .map(|choice| choice.id)
+                .collect::<Vec<_>>()
+                .into())
+        }
+    }
+}
+
+pub fn card_duration(values: &SettingValues) -> Duration {
+    let seconds = values
+        .number(CARD_DURATION.id)
+        .unwrap_or(DEFAULT_CARD_SECONDS);
+    Duration::from_secs(seconds.max(0) as u64)
 }
 
 /// Instruments that are set up right now.
@@ -181,9 +304,13 @@ async fn run_one(
     tools: &Tools<'_>,
 ) -> bool {
     let manifest = plugin.manifest();
-    let outcome = tokio::time::timeout(PLUGIN_TIMEOUT, plugin.on_dictation(dictation, tools))
-        .await
-        .unwrap_or_else(|_| Err("took too long to answer".into()));
+    let values = app.state::<PluginHost>().values(plugin);
+    let outcome = tokio::time::timeout(
+        PLUGIN_TIMEOUT,
+        plugin.on_dictation(dictation, &values, tools),
+    )
+    .await
+    .unwrap_or_else(|_| Err("took too long to answer".into()));
     let card = match outcome {
         Ok(Some(card)) => card,
         Ok(None) => return false,
@@ -207,22 +334,10 @@ async fn run_one(
         eprintln!("could not save the {} result: {error}", manifest.name);
     }
     app.state::<Tips>()
-        .show(&card, display_time(&card), dictation.transcript_id);
+        .show(&card, card_duration(&values), dictation.transcript_id);
     true
 }
 
-/// Long enough to glance at the card, short enough not to linger.
-pub fn display_time(card: &Card) -> Duration {
-    let chars: usize = card
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Text { text } => text.chars().count(),
-            Block::Change { before, after } => before.chars().count() + after.chars().count(),
-        })
-        .sum();
-    Duration::from_millis((3_000 + 50 * chars as u64).clamp(4_000, 7_000))
-}
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -233,7 +348,8 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_api::Manifest;
+    use crate::plugin_api::{Choice, Manifest};
+    use serde_json::json;
 
     struct Fake;
 
@@ -242,6 +358,26 @@ mod tests {
         name: "Fake",
         description: "",
         needs: &[Instrument::Llm],
+        settings: &[Setting {
+            id: "colors",
+            label: "Colors",
+            hint: "",
+            kind: SettingKind::AnyOf {
+                choices: &[
+                    Choice {
+                        id: "red",
+                        label: "Red",
+                        hint: "",
+                    },
+                    Choice {
+                        id: "blue",
+                        label: "Blue",
+                        hint: "",
+                    },
+                ],
+                default: &["red"],
+            },
+        }],
     };
 
     impl Plugin for Fake {
@@ -256,6 +392,7 @@ mod tests {
         fn on_dictation<'a>(
             &'a self,
             _dictation: &'a Dictation,
+            _settings: &'a SettingValues,
             _tools: &'a Tools<'a>,
         ) -> BoxFuture<'a, Result<Option<Card>, String>> {
             Box::pin(async { Ok(None) })
@@ -313,6 +450,116 @@ mod tests {
     }
 
     #[test]
+    fn settings_start_at_their_defaults() {
+        let db = Db::open_in_memory().unwrap();
+        let host = host(&db);
+        let view = &host.view(&[])[0];
+        let settings: Vec<_> = view
+            .settings
+            .iter()
+            .map(|view| (view.setting.id, view.value.clone()))
+            .collect();
+        assert_eq!(
+            settings,
+            [("colors", json!(["red"])), ("card_duration", json!(6))]
+        );
+        assert_eq!(card_duration(&host.values(&Fake)), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn remembers_valid_settings() {
+        let db = Db::open_in_memory().unwrap();
+        host(&db)
+            .set_setting(&db, "fake", "card_duration", &json!(12))
+            .unwrap();
+        host(&db)
+            .set_setting(&db, "fake", "colors", &json!(["blue", "red", "blue"]))
+            .unwrap();
+
+        let values = host(&db).values(&Fake);
+        assert_eq!(card_duration(&values), Duration::from_secs(12));
+        // Choices keep their declared order and appear once.
+        assert_eq!(values.chosen("colors"), ["red", "blue"]);
+    }
+
+    #[test]
+    fn rejects_settings_that_do_not_fit() {
+        let db = Db::open_in_memory().unwrap();
+        let host = host(&db);
+        for (setting, value) in [
+            ("card_duration", json!(2)),
+            ("card_duration", json!(31)),
+            ("card_duration", json!(6.5)),
+            ("card_duration", json!("6")),
+            ("colors", json!([])),
+            ("colors", json!(["green"])),
+            ("colors", json!("red")),
+            ("size", json!(1)),
+        ] {
+            assert!(
+                host.set_setting(&db, "fake", setting, &value).is_err(),
+                "{setting} = {value}"
+            );
+        }
+        assert!(
+            host.set_setting(&db, "nope", "card_duration", &json!(6))
+                .is_err()
+        );
+        let values = host.values(&Fake);
+        assert_eq!(card_duration(&values), Duration::from_secs(6));
+        assert_eq!(values.chosen("colors"), ["red"]);
+    }
+
+    #[test]
+    fn reads_older_and_broken_saved_settings() {
+        let db = Db::open_in_memory().unwrap();
+        settings::save_json(&db, PLUGINS_KEY, &json!({ "enabled": ["fake"] })).unwrap();
+        assert!(host(&db).view(&[])[0].enabled);
+        assert_eq!(host(&db).values(&Fake).chosen("colors"), ["red"]);
+
+        settings::save_json(
+            &db,
+            PLUGINS_KEY,
+            &json!({
+                "enabled": ["fake"],
+                "settings": { "fake": { "card_duration": 99, "colors": ["blue"] } },
+            }),
+        )
+        .unwrap();
+        let values = host(&db).values(&Fake);
+        assert_eq!(card_duration(&values), Duration::from_secs(6));
+        assert_eq!(values.chosen("colors"), ["blue"]);
+    }
+
+    #[test]
+    fn plugin_settings_are_well_formed() {
+        for plugin in crate::plugins::all() {
+            let name = plugin.manifest().name;
+            let mut ids: Vec<_> = all_settings(plugin.as_ref()).map(|s| s.id).collect();
+            let count = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(ids.len(), count, "{name} repeats a setting id");
+
+            for setting in all_settings(plugin.as_ref()) {
+                let default = setting.kind.default_value();
+                assert_eq!(
+                    normalize(&setting.kind, &default),
+                    Ok(default),
+                    "{name}: {}",
+                    setting.id
+                );
+                if let SettingKind::AnyOf { choices, .. } = &setting.kind {
+                    let mut ids: Vec<_> = choices.iter().map(|c| c.id).collect();
+                    ids.sort_unstable();
+                    ids.dedup();
+                    assert_eq!(ids.len(), choices.len(), "{name}: {}", setting.id);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn lends_the_llm_when_the_selected_method_is_set_up() {
         use crate::{chatgpt::ChatGpt, settings::OpenAiMethod};
 
@@ -333,23 +580,5 @@ mod tests {
             [Instrument::Llm]
         );
         assert!(available_with(Some("sk"), OpenAiMethod::ChatGpt, false).is_empty());
-    }
-
-    #[test]
-    fn shows_cards_long_enough_to_glance_at() {
-        let card = |text: &str| Card {
-            tone: crate::plugin_api::Tone::Tip,
-            blocks: vec![
-                Block::Change {
-                    before: "simple".into(),
-                    after: "casual".into(),
-                },
-                Block::Text { text: text.into() },
-            ],
-        };
-        let seconds = |card: Card| display_time(&card).as_secs_f64();
-        assert_eq!(seconds(card("")), 4.0);
-        assert_eq!(seconds(card("relaxed and informal")), 4.6);
-        assert_eq!(seconds(card(&"x".repeat(500))), 7.0);
     }
 }
