@@ -2,8 +2,10 @@
 //! need a regular key, so modifier-only taps are detected with a listen-only
 //! CGEventTap, which also records new shortcuts. Combos with a regular key go
 //! through the plugin, which also keeps the keystroke from reaching the active app.
+//! While dictating, Esc is registered the same way so it cancels without
+//! reaching the active app.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -102,6 +104,7 @@ pub struct Hotkey {
     tap: HotkeyStatus,
     /// The combo currently registered with the global-shortcut plugin.
     combo: Mutex<Option<HotKey>>,
+    escape: Mutex<std_mpsc::Sender<bool>>,
 }
 
 impl Hotkey {
@@ -109,8 +112,10 @@ impl Hotkey {
         app: &AppHandle,
         shortcut: Shortcut,
         toggle: impl Fn() + Send + Sync + 'static,
+        cancel: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         let toggle: Toggle = Arc::new(toggle);
+        let escape = spawn_escape(app.clone(), Arc::new(cancel));
         let shared = Arc::new(Mutex::new(Shared {
             shortcut: shortcut.clone(),
             capture: None,
@@ -122,6 +127,7 @@ impl Hotkey {
             toggle,
             tap,
             combo: Mutex::new(None),
+            escape: Mutex::new(escape),
         };
         if let Err(error) = hotkey.apply(&shortcut) {
             eprintln!("could not start the shortcut: {error}");
@@ -169,6 +175,12 @@ impl Hotkey {
         self.shared.lock().unwrap().cancel_capture();
     }
 
+    /// Takes over Esc while dictating so it cancels. Never blocks: the plugin
+    /// waits for the main thread, which may be the caller.
+    pub fn set_dictating(&self, dictating: bool) {
+        let _ = self.escape.lock().unwrap().send(dictating);
+    }
+
     fn register(&self, next: Option<HotKey>) -> Result<(), String> {
         let mut current = self.combo.lock().unwrap();
         if *current == next {
@@ -197,6 +209,44 @@ impl Hotkey {
         }
         Ok(())
     }
+}
+
+/// Registers or releases Esc on its own thread, always applying the latest wanted state.
+fn spawn_escape(app: AppHandle, cancel: Toggle) -> std_mpsc::Sender<bool> {
+    let (sender, receiver) = std_mpsc::channel::<bool>();
+    let spawned = std::thread::Builder::new()
+        .name("escape".into())
+        .spawn(move || {
+            let escape = HotKey::new(None, Code::Escape);
+            let shortcuts = app.global_shortcut();
+            let mut registered = false;
+            while let Ok(mut wanted) = receiver.recv() {
+                while let Ok(next) = receiver.try_recv() {
+                    wanted = next;
+                }
+                if wanted == registered {
+                    continue;
+                }
+                let result = if wanted {
+                    let cancel = Arc::clone(&cancel);
+                    shortcuts.on_shortcut(escape, move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            cancel();
+                        }
+                    })
+                } else {
+                    shortcuts.unregister(escape)
+                };
+                match result {
+                    Ok(()) => registered = wanted,
+                    Err(error) => eprintln!("could not update the Esc shortcut: {error}"),
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("could not start the Esc shortcut: {error}");
+    }
+    sender
 }
 
 fn combo_hotkey(shortcut: &Shortcut) -> Result<Option<HotKey>, String> {

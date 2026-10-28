@@ -18,6 +18,8 @@ cargo install tauri-cli --version '^2' --locked
 
 Touchless opens in your menu bar. To update, run `git pull && ./scripts/install.sh`.
 
+Changed your mind mid-sentence? Press <kbd>Esc</kbd> while dictating to cancel. Nothing is pasted or saved.
+
 ## Get an ElevenLabs API key (optional)
 
 ElevenLabs Scribe is the default and shows your words as you speak. It has a free plan, so you can try Touchless without paying. You can skip it and [use a local model](#use-a-local-model) instead.

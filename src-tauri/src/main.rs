@@ -614,8 +614,14 @@ fn main() {
             let recorder = Arc::new(Recorder::new(app.handle().clone(), overlay, sounds));
             app.manage(Arc::clone(&recorder));
 
-            let hotkey_recorder = Arc::clone(&recorder);
-            let hotkey = Hotkey::start(app.handle(), shortcut, move || hotkey_recorder.toggle());
+            let toggle_recorder = Arc::clone(&recorder);
+            let cancel_recorder = Arc::clone(&recorder);
+            let hotkey = Hotkey::start(
+                app.handle(),
+                shortcut,
+                move || toggle_recorder.toggle(),
+                move || cancel_recorder.cancel(),
+            );
             recorder.set_hotkey(hotkey.status());
             app.manage(hotkey);
 

@@ -1,6 +1,10 @@
 use std::{
     error::Error,
-    sync::{Arc, Mutex, mpsc as std_mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc as std_mpsc,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -12,7 +16,7 @@ use crate::{
     db::Db,
     elevenlabs::{self, ElevenLabs, TranscriptEvent},
     external,
-    hotkey::HotkeyStatus,
+    hotkey::{Hotkey, HotkeyStatus},
     microphone::Microphone,
     models::{LocalModel, ModelStore},
     openai::OpenAi,
@@ -57,6 +61,7 @@ struct Finished {
     transcript_id: Option<i64>,
     delivery: Option<Delivery>,
     error: Option<String>,
+    cancelled: bool,
 }
 
 struct Segment {
@@ -124,6 +129,9 @@ struct Inner {
     /// From the overlay's `show` for this dictation; `None` when the pop-up is off.
     overlay_token: Option<u64>,
     stop: Option<std_mpsc::Sender<()>>,
+    cancel: Option<oneshot::Sender<()>>,
+    /// Set once the current dictation is cancelled; also aborts local transcription.
+    cancelled: Arc<AtomicBool>,
 }
 
 pub struct Recorder {
@@ -152,6 +160,8 @@ impl Recorder {
                 languages: Vec::new(),
                 overlay_token: None,
                 stop: None,
+                cancel: None,
+                cancelled: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
@@ -166,10 +176,17 @@ impl Recorder {
 
     pub fn toggle(self: &Arc<Self>) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.snapshot.status != Status::Idle && inner.cancelled.load(Ordering::SeqCst) {
+            return;
+        }
         match inner.snapshot.status {
             Status::Idle => {
                 let (stop_tx, stop_rx) = std_mpsc::channel();
+                let (cancel_tx, cancel_rx) = oneshot::channel();
+                let cancelled = Arc::new(AtomicBool::new(false));
                 inner.stop = Some(stop_tx);
+                inner.cancel = Some(cancel_tx);
+                inner.cancelled = Arc::clone(&cancelled);
                 inner.segments = Segments::default();
                 inner.languages.clear();
                 let snapshot = &mut inner.snapshot;
@@ -190,7 +207,9 @@ impl Recorder {
                 self.inner.lock().unwrap().overlay_token = token;
 
                 let recorder = Arc::clone(self);
-                tauri::async_runtime::spawn(async move { recorder.session(stop_rx).await });
+                tauri::async_runtime::spawn(async move {
+                    recorder.session(stop_rx, cancel_rx, cancelled).await
+                });
             }
             Status::Connecting | Status::Listening => {
                 if let Some(stop) = inner.stop.take() {
@@ -211,13 +230,40 @@ impl Recorder {
         }
     }
 
-    async fn session(self: Arc<Self>, stop: std_mpsc::Receiver<()>) {
-        let result = self.record(stop).await;
+    /// Stops the current dictation without saving, pasting or running plugins.
+    pub fn cancel(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.snapshot.status == Status::Idle || inner.cancelled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Some(cancel) = inner.cancel.take() {
+            let _ = cancel.send(());
+        }
+        // Dropping the sender closes the microphone.
+        inner.stop = None;
+    }
+
+    async fn session(
+        self: Arc<Self>,
+        stop: std_mpsc::Receiver<()>,
+        cancel: oneshot::Receiver<()>,
+        cancelled: Arc<AtomicBool>,
+    ) {
+        let result = tokio::select! {
+            result = self.record(stop, Arc::clone(&cancelled)) => Some(result),
+            _ = cancel => None,
+        };
+        // A cancel that lands as the recording finishes still wins.
+        let result = match result {
+            Some(result) if !cancelled.load(Ordering::SeqCst) => result,
+            _ => return self.cancelled(),
+        };
 
         let (text, started_at, languages, overlay_token) = {
             let mut inner = self.inner.lock().unwrap();
             // Dropping the sender also stops the microphone thread on error paths.
             inner.stop = None;
+            inner.cancel = None;
             (
                 inner.snapshot.committed.trim().to_owned(),
                 inner.snapshot.started_at.unwrap_or_else(now_ms),
@@ -261,6 +307,7 @@ impl Recorder {
                 transcript_id,
                 delivery,
                 error: error.clone(),
+                cancelled: false,
             },
         );
         let hide_delay = match (&error, text.is_empty()) {
@@ -290,6 +337,36 @@ impl Recorder {
         }
     }
 
+    fn cancelled(&self) {
+        let overlay_token = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.stop = None;
+            inner.cancel = None;
+            inner.segments = Segments::default();
+            inner.languages.clear();
+            inner.overlay_token
+        };
+        let _ = self.app.emit(
+            "dictation-finished",
+            Finished {
+                text: String::new(),
+                transcript_id: None,
+                delivery: None,
+                error: None,
+                cancelled: true,
+            },
+        );
+        self.update(|snapshot| {
+            snapshot.status = Status::Idle;
+            snapshot.committed.clear();
+            snapshot.partial.clear();
+            snapshot.error = None;
+        });
+        if let Some(token) = overlay_token {
+            self.overlay.hide_after(token, Duration::from_millis(1_200));
+        }
+    }
+
     fn plugins_for(
         &self,
         transcript_id: i64,
@@ -309,12 +386,16 @@ impl Recorder {
         (!plugins.is_empty()).then_some((plugins, dictation))
     }
 
-    async fn record(self: &Arc<Self>, stop: std_mpsc::Receiver<()>) -> Result<()> {
+    async fn record(
+        self: &Arc<Self>,
+        stop: std_mpsc::Receiver<()>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<()> {
         let settings = self.app.state::<Settings>();
         let options = settings.transcription();
         match settings.engine().local() {
             None => self.record_elevenlabs(stop, options).await,
-            Some(model) => self.record_whisper(stop, model, options).await,
+            Some(model) => self.record_whisper(stop, model, options, cancelled).await,
         }
     }
 
@@ -353,6 +434,7 @@ impl Recorder {
         stop: std_mpsc::Receiver<()>,
         model: LocalModel,
         options: TranscriptionOptions,
+        cancelled: Arc<AtomicBool>,
     ) -> Result<()> {
         let path = match &model {
             LocalModel::Builtin(builtin) => {
@@ -397,7 +479,7 @@ impl Recorder {
         let transcription = options.clone();
         let transcript = tauri::async_runtime::spawn_blocking(move || {
             let pcm = whisper::to_whisper_audio(&chunks, sample_rate)?;
-            whisper::transcribe(&context, &pcm, &transcription)
+            whisper::transcribe(&context, &pcm, &transcription, cancelled)
         })
         .await
         .map_err(|error| format!("Whisper stopped unexpectedly: {error}"))??;
@@ -473,6 +555,9 @@ impl Recorder {
     fn emit(&self, snapshot: &Snapshot) {
         let _ = self.app.emit("recorder-state", snapshot);
         tray::set_status(&self.app, snapshot.status);
+        if let Some(hotkey) = self.app.try_state::<Hotkey>() {
+            hotkey.set_dictating(snapshot.status != Status::Idle);
+        }
     }
 }
 

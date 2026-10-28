@@ -2,7 +2,10 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use rubato::{Fft, FixedSync, Resampler, audioadapter_buffers::direct::InterleavedSlice};
@@ -313,6 +316,7 @@ pub fn transcribe(
     context: &WhisperContext,
     pcm: &[f32],
     options: &TranscriptionOptions,
+    abort: Arc<AtomicBool>,
 ) -> Result<Transcript, String> {
     let mut state = context
         .create_state()
@@ -331,6 +335,7 @@ pub fn transcribe(
     params.set_print_realtime(false);
     params.set_print_special(false);
     params.set_print_timestamps(false);
+    params.set_abort_callback_safe(move || abort.load(Ordering::Relaxed));
     let prompt = initial_prompt(options);
     if let Some(prompt) = &prompt {
         params.set_initial_prompt(prompt);
@@ -486,7 +491,13 @@ mod tests {
             16_000,
         )
         .unwrap();
-        let transcript = transcribe(&context, &pcm, &TranscriptionOptions::default()).unwrap();
+        let transcript = transcribe(
+            &context,
+            &pcm,
+            &TranscriptionOptions::default(),
+            Arc::default(),
+        )
+        .unwrap();
         eprintln!("live (whisper small): {transcript:?}");
         let text = transcript.text.to_lowercase();
         assert!(text.contains("fox"), "{text}");
