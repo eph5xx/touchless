@@ -1,6 +1,7 @@
 //! Speech recognition on this Mac with whisper.cpp.
 
 use std::{
+    ffi::c_void,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -311,6 +312,11 @@ impl LocalWhisper {
     }
 }
 
+/// whisper.cpp's abort callback; `data` points to the dictation's cancel flag.
+unsafe extern "C" fn cancelled(data: *mut c_void) -> bool {
+    unsafe { (*data.cast::<AtomicBool>()).load(Ordering::Relaxed) }
+}
+
 /// Transcribes 16 kHz mono audio in one pass. Blocks for a while; run it off the async runtime.
 pub fn transcribe(
     context: &WhisperContext,
@@ -335,7 +341,14 @@ pub fn transcribe(
     params.set_print_realtime(false);
     params.set_print_special(false);
     params.set_print_timestamps(false);
-    params.set_abort_callback_safe(move || abort.load(Ordering::Relaxed));
+    // `set_abort_callback_safe` in whisper-rs 0.16 passes a pointer to a box of the
+    // closure but reads it back as the closure itself, so it checks garbage memory and
+    // aborts at random. Point whisper.cpp straight at the flag instead.
+    // SAFETY: `abort` outlives `state.full`, the only call that runs the callback.
+    unsafe {
+        params.set_abort_callback(Some(cancelled));
+        params.set_abort_callback_user_data(Arc::as_ptr(&abort).cast_mut().cast());
+    }
     let prompt = initial_prompt(options);
     if let Some(prompt) = &prompt {
         params.set_initial_prompt(prompt);
@@ -448,10 +461,23 @@ mod tests {
         assert!(audio.iter().all(|sample| (-1.0..1.0).contains(sample)));
     }
 
+    #[test]
+    fn abort_callback_reads_the_cancel_flag() {
+        let flag = AtomicBool::new(false);
+        let data = std::ptr::from_ref(&flag).cast_mut().cast();
+        assert!(!unsafe { cancelled(data) });
+        flag.store(true, Ordering::Relaxed);
+        assert!(unsafe { cancelled(data) });
+    }
+
     /// 16 kHz mono PCM of `text` spoken by macOS `say`.
     fn say(text: &str) -> Vec<u8> {
-        let path =
-            std::env::temp_dir().join(format!("touchless-whisper-{}.wav", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "touchless-whisper-{}-{}.wav",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         let status = std::process::Command::new("say")
             .args(["--file-format=WAVE", "--data-format=LEI16@16000", "-o"])
             .arg(&path)
@@ -469,9 +495,7 @@ mod tests {
         wav[start..].to_vec()
     }
 
-    #[test]
-    #[ignore = "needs ggml-small.bin in the Touchless models folder or at $WHISPER_SMALL"]
-    fn live_transcribes_with_whisper_small() {
+    fn live_context() -> WhisperContext {
         let path = std::env::var_os("WHISPER_SMALL")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -484,8 +508,13 @@ mod tests {
             "download Whisper Small first: {}",
             path.display()
         );
-        let context =
-            WhisperContext::new_with_params(&path, WhisperContextParameters::default()).unwrap();
+        WhisperContext::new_with_params(&path, WhisperContextParameters::default()).unwrap()
+    }
+
+    #[test]
+    #[ignore = "needs ggml-small.bin in the Touchless models folder or at $WHISPER_SMALL"]
+    fn live_transcribes_with_whisper_small() {
+        let context = live_context();
         let pcm = to_whisper_audio(
             &[say("The quick brown fox jumps over the lazy dog.")],
             16_000,
@@ -503,5 +532,19 @@ mod tests {
         assert!(text.contains("fox"), "{text}");
         assert!(text.contains("lazy dog"), "{text}");
         assert_eq!(transcript.language.as_deref(), Some("eng"));
+    }
+
+    #[test]
+    #[ignore = "needs ggml-small.bin in the Touchless models folder or at $WHISPER_SMALL"]
+    fn live_cancelled_transcription_fails() {
+        let context = live_context();
+        let pcm = to_whisper_audio(&[say("This dictation was cancelled.")], 16_000).unwrap();
+        let result = transcribe(
+            &context,
+            &pcm,
+            &TranscriptionOptions::default(),
+            Arc::new(AtomicBool::new(true)),
+        );
+        assert!(result.is_err(), "{result:?}");
     }
 }
