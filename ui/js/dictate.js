@@ -26,7 +26,12 @@ const STATUS = {
   },
   listening: {
     label: "Listening",
-    hint: (press) => (press ? [...press, " again to finish."] : ["Click the button to finish."]),
+    hint: (press) => [
+      ...(press ? [...press, " again to finish."] : ["Click the button to finish."]),
+      " Press ",
+      el("kbd", {}, "Esc"),
+      " to cancel.",
+    ],
     action: "Stop dictation",
   },
   finalizing: {

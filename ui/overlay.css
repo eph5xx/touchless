@@ -100,11 +100,13 @@ svg {
 .finalizing .spinner,
 .done .check,
 .empty .check,
-.failed .cross {
+.failed .cross,
+.cancelled .cross {
   display: block;
 }
 
-.empty .check {
+.empty .check,
+.cancelled .cross {
   stroke: rgba(255, 255, 255, 0.5);
 }
 

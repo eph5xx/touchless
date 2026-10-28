@@ -30,6 +30,15 @@ function render() {
 function renderContent() {
   const pill = $("pill");
 
+  if (finished?.cancelled) {
+    pill.className = "pill cancelled";
+    $("committed").textContent = "Cancelled";
+    $("committed").className = "placeholder";
+    $("partial").textContent = "";
+    $("meta").textContent = minimal() ? "Cancelled" : "";
+    return;
+  }
+
   if (finished) {
     const kind = finished.error ? "failed" : finished.text ? "done" : "empty";
     pill.className = `pill ${kind}`;
