@@ -7,6 +7,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use rubato::{Fft, FixedSync, Resampler, audioadapter_buffers::direct::InterleavedSlice};
@@ -21,6 +22,8 @@ pub const SAMPLE_RATE: u32 = 16_000;
 /// whisper.cpp's default beam width.
 const BEAM_SIZE: i32 = 5;
 const NO_SPEECH_THRESHOLD: f32 = 0.6;
+/// How long quitting waits for a load or transcription to let go of the model.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// ISO-639-3 codes paired with Whisper's codes. The first entry for a Whisper
 /// code is the one reported back, so `cmn` wins over other Chinese codes.
@@ -191,6 +194,8 @@ pub struct LocalWhisper {
     app: AppHandle,
     inner: Mutex<Inner>,
     status: watch::Sender<WhisperStatus>,
+    /// Held by every load thread, so its count tells `shutdown` when loads are done.
+    loads: Arc<()>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -211,6 +216,7 @@ impl LocalWhisper {
                 generation: 0,
             }),
             status: watch::Sender::new(WhisperStatus::Unloaded),
+            loads: Arc::new(()),
         })
     }
 
@@ -237,7 +243,10 @@ impl LocalWhisper {
         });
 
         let whisper = Arc::clone(self);
+        let load = Arc::clone(&self.loads);
         tauri::async_runtime::spawn_blocking(move || {
+            // Declared first so it drops last, after a discarded model is freed.
+            let _load = load;
             let result =
                 WhisperContext::new_with_params(&path, WhisperContextParameters::default())
                     .map_err(|error| format!("could not load {}: {error}", model.name()));
@@ -270,6 +279,32 @@ impl LocalWhisper {
             inner.loaded = None;
         }
         self.set_status(WhisperStatus::Unloaded);
+    }
+
+    /// Frees the model before the app exits, waiting briefly for anything still using it.
+    /// whisper.cpp's Metal backend aborts the process if its GPU memory is still in use
+    /// when it shuts down.
+    pub fn shutdown(&self) {
+        let context = {
+            let mut inner = self.inner.lock().unwrap();
+            // Makes a load that is still running discard its model.
+            inner.generation += 1;
+            inner.loaded.take().map(|loaded| loaded.context)
+        };
+        let busy = || {
+            context
+                .as_ref()
+                .is_some_and(|context| Arc::strong_count(context) > 1)
+                || Arc::strong_count(&self.loads) > 1
+        };
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        while busy() {
+            if Instant::now() >= deadline {
+                eprintln!("Whisper is still busy, quitting anyway");
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Waits until `model` is loaded, starting the load if another model or none is.

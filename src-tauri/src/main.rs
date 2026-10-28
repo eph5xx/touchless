@@ -638,10 +638,14 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building Touchless");
 
-    app.run(|_app, _event| {
+    app.run(|app, event| match event {
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { .. } = _event {
-            tray::show_main(_app, None);
+        tauri::RunEvent::Reopen { .. } => tray::show_main(app, None),
+        tauri::RunEvent::Exit => {
+            // Stops a running transcription so its model can be freed too.
+            app.state::<Arc<Recorder>>().cancel();
+            app.state::<Arc<LocalWhisper>>().shutdown();
         }
+        _ => {}
     });
 }
