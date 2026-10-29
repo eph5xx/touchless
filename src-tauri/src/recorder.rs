@@ -410,10 +410,10 @@ impl Recorder {
             .api_key(Provider::ElevenLabs)
             .ok_or("Add your ElevenLabs API key in Settings to start dictating.")?;
 
-        let (sample_rate, audio_rx) = open_microphone(stop).await?;
+        let (sample_rate, audio_rx) = open_microphone(stop, self.microphone()).await?;
         if !elevenlabs::SAMPLE_RATES.contains(&sample_rate) {
             return Err(format!(
-                "the default microphone sample rate ({sample_rate}) is not supported by ElevenLabs"
+                "this microphone's sample rate ({sample_rate}) is not supported by ElevenLabs"
             )
             .into());
         }
@@ -456,7 +456,7 @@ impl Recorder {
             }
         };
 
-        let (sample_rate, mut audio_rx) = open_microphone(stop).await?;
+        let (sample_rate, mut audio_rx) = open_microphone(stop, self.microphone()).await?;
         // The microphone is already buffering, so nothing is lost while the model loads.
         let whisper = Arc::clone(self.app.state::<Arc<LocalWhisper>>().inner());
         let context = whisper.ready(model.clone(), path).await?;
@@ -515,6 +515,14 @@ impl Recorder {
         Ok(())
     }
 
+    /// The id of the microphone picked in Settings; `None` uses the default input.
+    fn microphone(&self) -> Option<String> {
+        self.app
+            .state::<Settings>()
+            .microphone()
+            .map(|choice| choice.id)
+    }
+
     fn apply(&self, event: TranscriptEvent) {
         let snapshot = {
             let mut inner = self.inner.lock().unwrap();
@@ -561,10 +569,12 @@ impl Recorder {
     }
 }
 
-/// Opens the default microphone; returns its sample rate and the 16-bit mono
-/// PCM chunks, which end once `stop` fires (or its sender is dropped).
+/// Opens the microphone with id `microphone`, or the default input; returns its
+/// sample rate and the 16-bit mono PCM chunks, which end once `stop` fires (or
+/// its sender is dropped).
 async fn open_microphone(
     stop: std_mpsc::Receiver<()>,
+    microphone: Option<String>,
 ) -> Result<(u32, mpsc::UnboundedReceiver<Vec<u8>>)> {
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (rate_tx, rate_rx) = oneshot::channel();
@@ -574,10 +584,11 @@ async fn open_microphone(
     std::thread::Builder::new()
         .name("microphone".into())
         .spawn(move || {
-            let microphone = Microphone::open(audio_tx).and_then(|microphone| {
-                microphone.start()?;
-                Ok(microphone)
-            });
+            let microphone =
+                Microphone::open(audio_tx, microphone.as_deref()).and_then(|microphone| {
+                    microphone.start()?;
+                    Ok(microphone)
+                });
             match microphone {
                 Ok(microphone) => {
                     let _ = rate_tx.send(Ok(microphone.sample_rate()));

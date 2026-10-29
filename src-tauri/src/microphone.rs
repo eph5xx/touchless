@@ -1,14 +1,60 @@
 use std::{error::Error, io};
 
 use cpal::{
-    Device, FromSample, Sample, SampleFormat, SizedSample, Stream, StreamConfig,
+    Device, FromSample, Host, Sample, SampleFormat, SizedSample, Stream, StreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 const CHUNK_MILLISECONDS: usize = 100;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MicrophoneView {
+    id: String,
+    name: String,
+    /// The Mac's current default input.
+    default: bool,
+}
+
+/// Connected input devices; ones whose id or name can't be read are skipped.
+pub fn list() -> Vec<MicrophoneView> {
+    let host = cpal::default_host();
+    let default_id = host
+        .default_input_device()
+        .and_then(|device| device.id().ok())
+        .map(|id| id.to_string());
+    let Ok(devices) = host.input_devices() else {
+        return Vec::new();
+    };
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?.to_string();
+            let name = device.description().ok()?.name().to_owned();
+            Some(MicrophoneView {
+                default: default_id.as_ref() == Some(&id),
+                id,
+                name,
+            })
+        })
+        .collect()
+}
+
+/// The device with id `preferred`, or the default input when it isn't connected.
+fn input_device(host: &Host, preferred: Option<&str>) -> Option<Device> {
+    if let Some(preferred) = preferred {
+        let found = host.input_devices().ok().and_then(|mut devices| {
+            devices.find(|device| device.id().is_ok_and(|id| id.to_string() == preferred))
+        });
+        if found.is_some() {
+            return found;
+        }
+        eprintln!("Microphone {preferred} not connected; using the default");
+    }
+    host.default_input_device()
+}
 
 pub struct Microphone {
     stream: Stream,
@@ -16,9 +62,9 @@ pub struct Microphone {
 }
 
 impl Microphone {
-    pub fn open(audio: mpsc::UnboundedSender<Vec<u8>>) -> Result<Self> {
-        let device = cpal::default_host()
-            .default_input_device()
+    /// Opens the microphone with id `preferred`, falling back to the default input.
+    pub fn open(audio: mpsc::UnboundedSender<Vec<u8>>, preferred: Option<&str>) -> Result<Self> {
+        let device = input_device(&cpal::default_host(), preferred)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no input device found"))?;
 
         let config = device.default_input_config().map_err(|error| {
@@ -32,7 +78,7 @@ impl Microphone {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(
-                    "the default microphone sample format ({}) is not supported",
+                    "this microphone's sample format ({}) is not supported",
                     config.sample_format()
                 ),
             )
