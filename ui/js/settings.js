@@ -37,6 +37,8 @@ let current = null;
 let recordingShortcut = false;
 let signingIn = false;
 let welcomeSeen = false;
+/** Connected microphones, refreshed when the window gains focus; `null` until loaded. */
+let microphones = null;
 
 export function initSettings(handleChange) {
   onChange = handleChange;
@@ -44,6 +46,11 @@ export function initSettings(handleChange) {
   for (const input of document.querySelectorAll("[data-preference]")) {
     input.addEventListener("change", savePreferences);
   }
+
+  $("microphone").addEventListener("change", saveMicrophone);
+  loadMicrophones();
+  // Picks up microphones plugged in while Touchless was in the background.
+  window.addEventListener("focus", loadMicrophones);
 
   $("shortcut-change").addEventListener("click", recordShortcut);
   $("shortcut-reset").addEventListener("click", (event) =>
@@ -163,9 +170,55 @@ export function renderSettings(settings) {
         : renderApiKey(provider, settings.api_keys[provider], draft)),
     );
   }
+  renderMicrophone(settings);
   renderShortcut(settings);
   renderTranscription(settings);
   renderWelcome(settings);
+}
+
+async function loadMicrophones() {
+  try {
+    microphones = await invoke("list_microphones");
+  } catch (error) {
+    toast(String(error), { error: true });
+  }
+  if (current) renderMicrophone(current);
+}
+
+function renderMicrophone(settings) {
+  const select = $("microphone");
+  const chosen = settings.microphone;
+  const listed = microphones ?? [];
+  const inList = chosen && listed.some((microphone) => microphone.id === chosen.id);
+  // Until the list loads, assume the saved microphone is connected.
+  const connected = !chosen || inList || microphones === null;
+  const fallback = listed.find((microphone) => microphone.default);
+  select.replaceChildren(
+    el("option", { value: "" }, fallback ? `System default (${fallback.name})` : "System default"),
+    ...listed.map(({ id, name }) => el("option", { value: id }, name)),
+    !chosen || inList
+      ? null
+      : el("option", { value: chosen.id }, connected ? chosen.name : `${chosen.name} — not connected`),
+  );
+  select.value = chosen?.id ?? "";
+  $("microphone-hint").textContent = !chosen
+    ? "Uses your Mac's default input."
+    : connected
+      ? ""
+      : "Not connected. Using the system default for now.";
+}
+
+async function saveMicrophone(event) {
+  const id = event.target.value;
+  const picked = microphones?.find((microphone) => microphone.id === id);
+  // The not-connected choice has no device in the list; keep it as saved.
+  const microphone = !id ? null : picked ? { id, name: picked.name } : current.microphone;
+  try {
+    update(await invoke("set_microphone", { microphone }));
+  } catch (error) {
+    toast(String(error), { error: true });
+    renderSettings(current);
+  }
 }
 
 function renderShortcut(settings) {

@@ -28,6 +28,7 @@ use db::{Db, HistoryPage, HistoryQuery};
 use external::ExternalModelView;
 use hotkey::Hotkey;
 use mcp_clients::{ClientId, McpView};
+use microphone::MicrophoneView;
 use models::{LocalModel, ModelStore, ModelView, WhisperModel};
 use overlay::Overlay;
 use permissions::{Permissions, PrivacyPane};
@@ -35,7 +36,8 @@ use plugin_host::{PluginHost, PluginView};
 use recorder::{Recorder, Snapshot};
 use serde::Serialize;
 use settings::{
-    Engine, OpenAiMethod, Preferences, Provider, Settings, SettingsView, TranscriptionOptions,
+    Engine, MicrophoneChoice, OpenAiMethod, Preferences, Provider, Settings, SettingsView,
+    TranscriptionOptions,
 };
 use shortcut::Shortcut;
 use sound::Sounds;
@@ -401,6 +403,22 @@ fn update_transcription(
     Ok(settings.view())
 }
 
+// Async so the CoreAudio calls run off the main thread.
+#[tauri::command]
+async fn list_microphones() -> Vec<MicrophoneView> {
+    microphone::list()
+}
+
+#[tauri::command]
+fn set_microphone(
+    db: State<'_, Db>,
+    settings: State<'_, Settings>,
+    microphone: Option<MicrophoneChoice>,
+) -> Result<SettingsView, String> {
+    settings.set_microphone(&db, microphone)?;
+    Ok(settings.view())
+}
+
 #[tauri::command]
 fn update_preferences(
     app: AppHandle,
@@ -566,6 +584,8 @@ fn main() {
             set_plugin_setting,
             update_transcription,
             update_preferences,
+            list_microphones,
+            set_microphone,
             capture_shortcut,
             cancel_shortcut_capture,
             reset_shortcut,

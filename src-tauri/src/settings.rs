@@ -19,6 +19,7 @@ const TRANSCRIPTION_KEY: &str = "transcription";
 const SHORTCUT_KEY: &str = "shortcut";
 const OPENAI_METHOD_KEY: &str = "openai_method";
 const EXTERNAL_MODELS_KEY: &str = "external_models";
+const MICROPHONE_KEY: &str = "microphone";
 pub const MAX_KEYTERMS: usize = 50;
 pub const MAX_EDIT_INSTRUCTION_CHARS: usize = 2000;
 
@@ -57,6 +58,14 @@ impl From<WhisperModel> for Engine {
             WhisperModel::WhisperSmall => Self::WhisperSmall,
         }
     }
+}
+
+/// The microphone picked in Settings. The name is kept so Settings can name it
+/// while it is not connected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MicrophoneChoice {
+    pub id: String,
+    pub name: String,
 }
 
 /// A service whose API key Touchless keeps in the Keychain.
@@ -365,6 +374,8 @@ pub struct SettingsView {
     api_keys: ApiKeysView,
     openai: OpenAiView,
     engine: Engine,
+    /// `None` uses the Mac's default input.
+    microphone: Option<MicrophoneChoice>,
     preferences: Preferences,
     transcription: TranscriptionOptions,
     shortcut: Shortcut,
@@ -379,6 +390,7 @@ pub struct Settings {
     chatgpt: Arc<ChatGpt>,
     engine: Mutex<Engine>,
     external_models: Mutex<Vec<PathBuf>>,
+    microphone: Mutex<Option<MicrophoneChoice>>,
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
     shortcut: Mutex<Shortcut>,
@@ -396,6 +408,7 @@ impl Settings {
             chatgpt,
             engine: Mutex::new(load_json(db, ENGINE_KEY)),
             external_models: Mutex::new(load_json(db, EXTERNAL_MODELS_KEY)),
+            microphone: Mutex::new(load_json(db, MICROPHONE_KEY)),
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_transcription(db)),
             shortcut: Mutex::new(load_shortcut(db)),
@@ -416,6 +429,7 @@ impl Settings {
                 chatgpt: self.chatgpt.view(),
             },
             engine: self.engine(),
+            microphone: self.microphone(),
             preferences: self.preferences(),
             transcription: self.transcription(),
             shortcut_is_default: shortcut == Shortcut::default(),
@@ -481,6 +495,7 @@ impl Settings {
             chatgpt: Arc::new(chatgpt),
             engine: Mutex::default(),
             external_models: Mutex::default(),
+            microphone: Mutex::default(),
             preferences: Mutex::default(),
             transcription: Mutex::default(),
             shortcut: Mutex::default(),
@@ -540,6 +555,19 @@ impl Settings {
         *current = next;
         Ok(())
     }
+
+    pub fn microphone(&self) -> Option<MicrophoneChoice> {
+        self.microphone.lock().unwrap().clone()
+    }
+
+    /// `None` goes back to the Mac's default input.
+    pub fn set_microphone(&self, db: &Db, choice: Option<MicrophoneChoice>) -> Result<(), String> {
+        save_json(db, MICROPHONE_KEY, &choice)
+            .map_err(|error| format!("could not save the microphone: {error}"))?;
+        *self.microphone.lock().unwrap() = choice;
+        Ok(())
+    }
+
     pub fn preferences(&self) -> Preferences {
         *self.preferences.lock().unwrap()
     }
@@ -816,6 +844,30 @@ mod tests {
             remaining
         );
     }
+    #[test]
+    fn microphone_defaults_to_system_and_round_trips() {
+        let db = Db::open_in_memory().unwrap();
+        let saved = || load_json::<Option<MicrophoneChoice>>(&db, MICROPHONE_KEY);
+        let settings = Settings::for_test(None, OpenAiMethod::ApiKey, ChatGpt::for_test(false));
+        assert_eq!(settings.microphone(), None);
+        assert_eq!(saved(), None);
+
+        let choice = MicrophoneChoice {
+            id: "coreaudio:BuiltInMicrophoneDevice".into(),
+            name: "MacBook Pro Microphone".into(),
+        };
+        settings.set_microphone(&db, Some(choice.clone())).unwrap();
+        assert_eq!(settings.microphone(), Some(choice.clone()));
+        assert_eq!(saved(), Some(choice));
+
+        settings.set_microphone(&db, None).unwrap();
+        assert_eq!(settings.microphone(), None);
+        assert_eq!(saved(), None);
+
+        db.set_setting(MICROPHONE_KEY, r#""built-in""#).unwrap();
+        assert_eq!(saved(), None);
+    }
+
     #[test]
     fn set_engine_needs_a_downloaded_model() {
         let db = Db::open_in_memory().unwrap();
