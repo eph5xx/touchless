@@ -221,6 +221,13 @@ function renderEntry(entry) {
         "div",
         { className: "history-row-meta" },
         el("span", {}, `${time} · ${formatDuration(entry.duration_ms)}`),
+        entry.cancelled
+          ? el(
+              "span",
+              { className: "history-cancelled", title: "Esc was pressed, so this wasn't pasted." },
+              "Cancelled",
+            )
+          : null,
         results.length
           ? el(
               "span",

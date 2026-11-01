@@ -663,7 +663,7 @@ fn main() {
         tauri::RunEvent::Reopen { .. } => tray::show_main(app, None),
         tauri::RunEvent::Exit => {
             // Stops a running transcription so its model can be freed too.
-            app.state::<Arc<Recorder>>().cancel();
+            app.state::<Arc<Recorder>>().abort();
             app.state::<Arc<LocalWhisper>>().shutdown();
         }
         _ => {}

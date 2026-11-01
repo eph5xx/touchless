@@ -40,6 +40,16 @@ const STATUS = {
     action: "Finalizing",
   },
 };
+const CANCELLING = {
+  label: "Cancelled",
+  hint: () => ["Saving to History without pasting…"],
+  action: "Finalizing",
+};
+
+function statusInfo(recorder) {
+  if (recorder?.status === "finalizing" && recorder.cancelled) return CANCELLING;
+  return STATUS[recorder?.status ?? "idle"];
+}
 
 let state = null;
 let stoppedAt = null;
@@ -61,7 +71,7 @@ export function renderRecorder(next) {
   state = next;
 
   const { status } = state;
-  const info = STATUS[status];
+  const info = statusInfo(state);
   const button = $("record");
   button.className = `record-button ${status}`;
   button.setAttribute("aria-label", info.action);
@@ -94,7 +104,7 @@ export function renderShortcut() {
     ? `${verb} ${shortcutText(shortcut)}, talk, and your words appear where you type.`
     : "Talk, and your words appear where you type.";
   const press = shortcut ? [`${verb} `, ...shortcutKeys(shortcut)] : null;
-  $("status-hint").replaceChildren(...STATUS[state?.status ?? "idle"].hint(press));
+  $("status-hint").replaceChildren(...statusInfo(state).hint(press));
 }
 
 function renderTimer() {

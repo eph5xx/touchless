@@ -30,12 +30,14 @@ function render() {
 function renderContent() {
   const pill = $("pill");
 
-  if (finished?.cancelled) {
+  if (finished?.cancelled && !finished.error) {
+    const saved = finished.transcript_id != null;
     pill.className = "pill cancelled";
-    $("committed").textContent = "Cancelled";
-    $("committed").className = "placeholder";
+    $("committed").textContent = finished.text || "Cancelled";
+    $("committed").className = finished.text ? "" : "placeholder";
     $("partial").textContent = "";
-    $("meta").textContent = minimal() ? "Cancelled" : "";
+    if (minimal()) $("meta").textContent = saved ? "Saved" : "Cancelled";
+    else $("meta").textContent = saved ? "Saved to History" : "";
     return;
   }
 
@@ -70,7 +72,9 @@ function renderContent() {
   const end = stoppedAt ?? Date.now();
   $("meta").textContent =
     status === "finalizing"
-      ? "Finalizing"
+      ? state.cancelled
+        ? "Cancelled"
+        : "Finalizing"
       : state?.started_at
         ? formatDuration(end - state.started_at)
         : "";

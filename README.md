@@ -18,7 +18,7 @@ cargo install tauri-cli --version '^2' --locked
 
 Touchless opens in your menu bar. To update, run `git pull && ./scripts/install.sh`.
 
-Changed your mind mid-sentence? Press <kbd>Esc</kbd> while dictating to cancel. Nothing is pasted or saved.
+Changed your mind mid-sentence? Press <kbd>Esc</kbd> while dictating to cancel. Nothing is pasted, but the transcript is kept in History, tagged Cancelled.
 
 ## Get an ElevenLabs API key (optional)
 

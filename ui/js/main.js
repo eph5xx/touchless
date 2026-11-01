@@ -18,6 +18,7 @@ const DELIVERY_MESSAGES = {
   copied: "Copied to clipboard",
   saved: "Saved to history",
 };
+const CANCELLED_MESSAGE = "Cancelled. Saved to history, not pasted.";
 
 const app = {
   recorder: null,
@@ -113,8 +114,11 @@ await listen("plugins-changed", async () => {
   renderCallouts(app);
 });
 await listen("dictation-finished", ({ payload }) => {
-  if (!payload.delivery) return;
-  const message = DELIVERY_MESSAGES[payload.delivery];
+  const message =
+    payload.cancelled && payload.transcript_id != null
+      ? CANCELLED_MESSAGE
+      : DELIVERY_MESSAGES[payload.delivery];
+  if (!message) return;
   showDeliveryStatus(message);
   if (document.hasFocus()) toast(message);
 });
