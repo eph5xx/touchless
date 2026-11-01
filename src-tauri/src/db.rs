@@ -11,6 +11,8 @@ pub struct Transcript {
     pub text: String,
     pub created_at: i64,
     pub duration_ms: i64,
+    /// Esc ended the dictation, so it was saved but not pasted.
+    pub cancelled: bool,
     pub plugin_results: Vec<PluginResult>,
 }
 
@@ -86,7 +88,8 @@ impl Db {
                 id INTEGER PRIMARY KEY,
                 text TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                duration_ms INTEGER NOT NULL
+                duration_ms INTEGER NOT NULL,
+                cancelled INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -105,6 +108,17 @@ impl Db {
             CREATE INDEX IF NOT EXISTS transcripts_created
                 ON transcripts (created_at, id);",
         )?;
+        let has_cancelled: bool = connection.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('transcripts') WHERE name = 'cancelled'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_cancelled {
+            connection.execute(
+                "ALTER TABLE transcripts ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -115,17 +129,20 @@ impl Db {
         text: &str,
         created_at: i64,
         duration_ms: i64,
+        cancelled: bool,
     ) -> rusqlite::Result<Transcript> {
         let connection = self.connection.lock().unwrap();
         connection.execute(
-            "INSERT INTO transcripts (text, created_at, duration_ms) VALUES (?1, ?2, ?3)",
-            params![text, created_at, duration_ms],
+            "INSERT INTO transcripts (text, created_at, duration_ms, cancelled)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![text, created_at, duration_ms, cancelled],
         )?;
         Ok(Transcript {
             id: connection.last_insert_rowid(),
             text: text.to_owned(),
             created_at,
             duration_ms,
+            cancelled,
             plugin_results: Vec::new(),
         })
     }
@@ -217,7 +234,7 @@ impl Db {
             format!("WHERE {}", page_filters.join(" AND "))
         };
         let mut statement = connection.prepare(&format!(
-            "SELECT t.id, t.text, t.created_at, t.duration_ms FROM transcripts t
+            "SELECT t.id, t.text, t.created_at, t.duration_ms, t.cancelled FROM transcripts t
              {page_where}
              ORDER BY t.created_at DESC, t.id DESC
              LIMIT :limit"
@@ -230,6 +247,7 @@ impl Db {
                     text: row.get(1)?,
                     created_at: row.get(2)?,
                     duration_ms: row.get(3)?,
+                    cancelled: row.get(4)?,
                     plugin_results: Vec::new(),
                 })
             })?
@@ -365,8 +383,8 @@ mod tests {
     #[test]
     fn lists_newest_first() {
         let db = Db::open_in_memory().unwrap();
-        db.insert("first", 1_000, 500).unwrap();
-        let second = db.insert("second", 2_000, 700).unwrap();
+        db.insert("first", 1_000, 500, false).unwrap();
+        let second = db.insert("second", 2_000, 700, false).unwrap();
 
         let all = list(&db);
         assert_eq!(all.len(), 2);
@@ -377,8 +395,8 @@ mod tests {
     #[test]
     fn deletes_transcripts() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert("first", 1_000, 500).unwrap();
-        db.insert("second", 2_000, 700).unwrap();
+        let first = db.insert("first", 1_000, 500, false).unwrap();
+        db.insert("second", 2_000, 700, false).unwrap();
 
         db.delete(first.id).unwrap();
         let all = list(&db);
@@ -390,8 +408,8 @@ mod tests {
     fn latest_text_follows_inserts_and_deletes() {
         let db = Db::open_in_memory().unwrap();
         assert_eq!(db.latest_text().unwrap(), None);
-        db.insert("first", 1_000, 500).unwrap();
-        let second = db.insert("second", 2_000, 700).unwrap();
+        db.insert("first", 1_000, 500, false).unwrap();
+        let second = db.insert("second", 2_000, 700, false).unwrap();
         assert_eq!(db.latest_text().unwrap().as_deref(), Some("second"));
 
         db.delete(second.id).unwrap();
@@ -410,8 +428,8 @@ mod tests {
     #[test]
     fn lists_plugin_results_with_their_transcript() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert("first", 1_000, 500).unwrap();
-        let second = db.insert("second", 2_000, 700).unwrap();
+        let first = db.insert("first", 1_000, 500, false).unwrap();
+        let second = db.insert("second", 2_000, 700, false).unwrap();
         db.insert_plugin_result(first.id, &lesson(1_100)).unwrap();
 
         let all = list(&db);
@@ -423,12 +441,12 @@ mod tests {
     #[test]
     fn deleting_a_transcript_deletes_its_plugin_results() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert("first", 1_000, 500).unwrap();
+        let first = db.insert("first", 1_000, 500, false).unwrap();
         db.insert_plugin_result(first.id, &lesson(1_100)).unwrap();
         db.delete(first.id).unwrap();
 
         // A reused id must not pick up the old results.
-        let again = db.insert("again", 3_000, 500).unwrap();
+        let again = db.insert("again", 3_000, 500, false).unwrap();
         assert_eq!(again.id, first.id);
         assert!(list(&db)[0].plugin_results.is_empty());
     }
@@ -441,7 +459,8 @@ mod tests {
             .iter()
             .enumerate()
         {
-            db.insert(&format!("t{index}"), *created_at, 0).unwrap();
+            db.insert(&format!("t{index}"), *created_at, 0, false)
+                .unwrap();
         }
 
         let found = all_pages(
@@ -475,7 +494,7 @@ mod tests {
     fn caps_the_page_size() {
         let db = Db::open_in_memory().unwrap();
         for index in 0..120 {
-            db.insert("text", index, 0).unwrap();
+            db.insert("text", index, 0, false).unwrap();
         }
         assert_eq!(page(&db, HistoryQuery::default()).transcripts.len(), 50);
         let big = page(
@@ -513,9 +532,9 @@ mod tests {
     #[test]
     fn filters_by_date_and_insights() {
         let db = Db::open_in_memory().unwrap();
-        let old = db.insert("old", 1_000, 0).unwrap();
-        db.insert("new", 5_000, 0).unwrap();
-        let newer = db.insert("newer", 6_000, 0).unwrap();
+        let old = db.insert("old", 1_000, 0, false).unwrap();
+        db.insert("new", 5_000, 0, false).unwrap();
+        let newer = db.insert("newer", 6_000, 0, false).unwrap();
         db.insert_plugin_result(old.id, &lesson(1_100)).unwrap();
         db.insert_plugin_result(newer.id, &lesson(6_100)).unwrap();
 
@@ -554,10 +573,11 @@ mod tests {
     #[test]
     fn searches_text_ignoring_case() {
         let db = Db::open_in_memory().unwrap();
-        db.insert("Release plan for Friday", 1_000, 0).unwrap();
-        db.insert("привет, мир", 2_000, 0).unwrap();
-        db.insert("Größe", 3_000, 0).unwrap();
-        db.insert("nothing here", 4_000, 0).unwrap();
+        db.insert("Release plan for Friday", 1_000, 0, false)
+            .unwrap();
+        db.insert("привет, мир", 2_000, 0, false).unwrap();
+        db.insert("Größe", 3_000, 0, false).unwrap();
+        db.insert("nothing here", 4_000, 0, false).unwrap();
 
         let search = |text: &str| {
             let result = page(
@@ -585,8 +605,8 @@ mod tests {
     #[test]
     fn searches_card_text() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert("I have went home", 1_000, 0).unwrap();
-        let second = db.insert("Something else", 2_000, 0).unwrap();
+        let first = db.insert("I have went home", 1_000, 0, false).unwrap();
+        let second = db.insert("Something else", 2_000, 0, false).unwrap();
         db.insert_plugin_result(
             first.id,
             &PluginResult {
@@ -635,7 +655,7 @@ mod tests {
     #[test]
     fn deleted_results_stay_out_of_search() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert("first", 1_000, 0).unwrap();
+        let first = db.insert("first", 1_000, 0, false).unwrap();
         db.insert_plugin_result(
             first.id,
             &PluginResult {
@@ -646,7 +666,7 @@ mod tests {
         .unwrap();
         db.delete(first.id).unwrap();
 
-        let again = db.insert("again", 3_000, 0).unwrap();
+        let again = db.insert("again", 3_000, 0, false).unwrap();
         assert_eq!(again.id, first.id);
         let found = page(
             &db,
@@ -665,6 +685,41 @@ mod tests {
             },
         );
         assert!(insights.transcripts.is_empty());
+    }
+
+    #[test]
+    fn keeps_whether_a_transcript_was_cancelled() {
+        let db = Db::open_in_memory().unwrap();
+        db.insert("pasted", 1_000, 0, false).unwrap();
+        let cancelled = db.insert("cancelled", 2_000, 0, true).unwrap();
+
+        let all = list(&db);
+        assert_eq!(all[0], cancelled);
+        assert!(all[0].cancelled);
+        assert!(!all[1].cancelled);
+    }
+
+    #[test]
+    fn adds_the_cancelled_column_to_old_databases() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE transcripts (
+                    id INTEGER PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL
+                );
+                INSERT INTO transcripts (text, created_at, duration_ms) VALUES ('old', 1000, 0);",
+            )
+            .unwrap();
+        let db = Db::init(connection).unwrap();
+        db.insert("new", 2_000, 0, true).unwrap();
+
+        let all = list(&db);
+        assert_eq!(texts(&all), ["new", "old"]);
+        assert!(all[0].cancelled);
+        assert!(!all[1].cancelled);
     }
 
     #[test]

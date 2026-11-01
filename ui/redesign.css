@@ -310,12 +310,18 @@ button.filter.active {
   font-size: 11px;
 }
 
-.history-insight-count {
+.history-insight-count,
+.history-cancelled {
   padding: 2px 7px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 600;
+}
+
+.history-cancelled {
+  background: var(--border);
+  color: var(--muted);
 }
 
 .history-row-actions {
