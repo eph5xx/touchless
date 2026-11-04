@@ -42,6 +42,7 @@ use settings::{
 use shortcut::Shortcut;
 use sound::Sounds;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::DialogExt;
 use tips::Tips;
 use whisper::{LocalWhisper, WhisperStatus};
@@ -80,9 +81,55 @@ fn open_transcript(app: AppHandle, id: i64) {
     let _ = app.emit_to("main", "open-transcript", id);
 }
 
+/// Passed by the login item so a login launch stays in the menu bar.
+const HIDDEN_ARG: &str = "--hidden";
+/// Set once the first launch has turned on launch on startup.
+const LAUNCH_ON_STARTUP_INITIALIZED_KEY: &str = "launch_on_startup_initialized";
+
 #[tauri::command]
-fn get_settings(settings: State<'_, Settings>) -> SettingsView {
+fn get_settings(app: AppHandle, settings: State<'_, Settings>) -> SettingsView {
+    // The user may have changed it outside Touchless.
+    if let Ok(enabled) = app.autolaunch().is_enabled() {
+        settings.set_launch_on_startup(enabled);
+    }
     settings.view()
+}
+
+#[tauri::command]
+fn set_launch_on_startup(
+    app: AppHandle,
+    settings: State<'_, Settings>,
+    enabled: bool,
+) -> Result<SettingsView, String> {
+    let autolaunch = app.autolaunch();
+    let result = if enabled {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    result.map_err(|error| format!("could not change launch on startup: {error}"))?;
+    settings.set_launch_on_startup(autolaunch.is_enabled().unwrap_or(enabled));
+    Ok(settings.view())
+}
+
+/// Turns launch on startup on the first time Touchless runs. Runs only once,
+/// so it never undoes the user turning it off. Dev builds skip it so they
+/// don't register the debug binary as a login item.
+fn init_launch_on_startup(app: &AppHandle, db: &Db, settings: &Settings) {
+    let autolaunch = app.autolaunch();
+    if !cfg!(debug_assertions)
+        && matches!(db.get_setting(LAUNCH_ON_STARTUP_INITIALIZED_KEY), Ok(None))
+    {
+        match autolaunch.enable() {
+            Ok(()) => {
+                if let Err(error) = db.set_setting(LAUNCH_ON_STARTUP_INITIALIZED_KEY, "1") {
+                    eprintln!("could not save launch on startup: {error}");
+                }
+            }
+            Err(error) => eprintln!("could not turn on launch on startup: {error}"),
+        }
+    }
+    settings.set_launch_on_startup(autolaunch.is_enabled().unwrap_or(false));
 }
 
 #[tauri::command]
@@ -550,6 +597,10 @@ fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![HIDDEN_ARG]),
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -584,6 +635,7 @@ fn main() {
             set_plugin_setting,
             update_transcription,
             update_preferences,
+            set_launch_on_startup,
             list_microphones,
             set_microphone,
             capture_shortcut,
@@ -607,6 +659,7 @@ fn main() {
                 let _ = handle.emit("plugins-changed", ());
             });
             let settings = Settings::load(&db, Arc::clone(&chatgpt));
+            init_launch_on_startup(app.handle(), &db, &settings);
             let shortcut = settings.shortcut();
 
             let models = ModelStore::new(data_dir.join("models"));
@@ -646,6 +699,10 @@ fn main() {
             app.manage(hotkey);
 
             tray::create(app.handle())?;
+            // The main window starts hidden; a login launch keeps it that way.
+            if !std::env::args().any(|arg| arg == HIDDEN_ARG) {
+                tray::show_main(app.handle(), None);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
