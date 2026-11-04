@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -380,6 +383,8 @@ pub struct SettingsView {
     transcription: TranscriptionOptions,
     shortcut: Shortcut,
     shortcut_is_default: bool,
+    /// Whether macOS starts Touchless when the user logs in.
+    launch_on_startup: bool,
 }
 
 /// API keys and ChatGPT tokens live in the macOS Keychain; everything else
@@ -394,6 +399,8 @@ pub struct Settings {
     preferences: Mutex<Preferences>,
     transcription: Mutex<TranscriptionOptions>,
     shortcut: Mutex<Shortcut>,
+    /// macOS owns this switch; this mirrors it so `view()` needs no AppHandle.
+    launch_on_startup: AtomicBool,
 }
 
 impl Settings {
@@ -412,6 +419,7 @@ impl Settings {
             preferences: Mutex::new(load_json(db, PREFERENCES_KEY)),
             transcription: Mutex::new(load_transcription(db)),
             shortcut: Mutex::new(load_shortcut(db)),
+            launch_on_startup: AtomicBool::new(false),
         }
     }
 
@@ -433,6 +441,7 @@ impl Settings {
             preferences: self.preferences(),
             transcription: self.transcription(),
             shortcut_is_default: shortcut == Shortcut::default(),
+            launch_on_startup: self.launch_on_startup.load(Ordering::Relaxed),
             shortcut,
         }
     }
@@ -499,6 +508,7 @@ impl Settings {
             preferences: Mutex::default(),
             transcription: Mutex::default(),
             shortcut: Mutex::default(),
+            launch_on_startup: AtomicBool::default(),
         }
     }
 
@@ -566,6 +576,10 @@ impl Settings {
             .map_err(|error| format!("could not save the microphone: {error}"))?;
         *self.microphone.lock().unwrap() = choice;
         Ok(())
+    }
+
+    pub fn set_launch_on_startup(&self, enabled: bool) {
+        self.launch_on_startup.store(enabled, Ordering::Relaxed);
     }
 
     pub fn preferences(&self) -> Preferences {

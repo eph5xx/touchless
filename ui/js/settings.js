@@ -47,6 +47,7 @@ export function initSettings(handleChange) {
     input.addEventListener("change", savePreferences);
   }
 
+  $("launch-on-startup").addEventListener("change", saveLaunchOnStartup);
   $("microphone").addEventListener("change", saveMicrophone);
   loadMicrophones();
   // Picks up microphones plugged in while Touchless was in the background.
@@ -170,6 +171,7 @@ export function renderSettings(settings) {
         : renderApiKey(provider, settings.api_keys[provider], draft)),
     );
   }
+  $("launch-on-startup").checked = settings.launch_on_startup;
   renderMicrophone(settings);
   renderShortcut(settings);
   renderTranscription(settings);
@@ -206,6 +208,15 @@ function renderMicrophone(settings) {
     : connected
       ? ""
       : "Not connected. Using the system default for now.";
+}
+
+async function saveLaunchOnStartup(event) {
+  try {
+    update(await invoke("set_launch_on_startup", { enabled: event.target.checked }));
+  } catch (error) {
+    toast(String(error), { error: true });
+    renderSettings(current);
+  }
 }
 
 async function saveMicrophone(event) {
