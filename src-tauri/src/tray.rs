@@ -193,11 +193,28 @@ fn icon_ink(_tray: &tauri::tray::TrayIcon) -> IconInk {
     IconInk::White
 }
 
+/// Touchless only has a Dock icon while its main window is open.
+#[cfg(target_os = "macos")]
+pub fn set_dock_icon(app: &AppHandle, visible: bool) {
+    let policy = if visible {
+        tauri::ActivationPolicy::Regular
+    } else {
+        tauri::ActivationPolicy::Accessory
+    };
+    if let Err(error) = app.set_activation_policy(policy) {
+        eprintln!("could not update the Dock icon: {error}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_dock_icon(_app: &AppHandle, _visible: bool) {}
+
 /// Shows and focuses the main window, optionally switching to a page.
 pub fn show_main(app: &AppHandle, page: Option<&str>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
+    set_dock_icon(app, true);
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
