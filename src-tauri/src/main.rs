@@ -699,6 +699,8 @@ fn main() {
             app.manage(hotkey);
 
             tray::create(app.handle())?;
+            // Info.plist covers the bundled app; `cargo tauri dev` doesn't use it.
+            tray::set_dock_icon(app.handle(), false);
             // The main window starts hidden; a login launch keeps it that way.
             if !std::env::args().any(|arg| arg == HIDDEN_ARG) {
                 tray::show_main(app.handle(), None);
@@ -710,6 +712,9 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "main" {
+                    tray::set_dock_icon(window.app_handle(), false);
+                }
             }
         })
         .build(tauri::generate_context!())

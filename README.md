@@ -16,7 +16,7 @@ cargo install tauri-cli --version '^2' --locked
 ./scripts/install.sh
 ```
 
-Touchless opens in your menu bar. To update, run `git pull && ./scripts/install.sh`.
+Touchless opens in your menu bar. It only appears in the Dock while its window is open. To update, run `git pull && ./scripts/install.sh`.
 
 Changed your mind mid-sentence? Press <kbd>Esc</kbd> while dictating to cancel. Nothing is pasted, but the transcript is kept in History, tagged Cancelled.
 
